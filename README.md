@@ -1,6 +1,6 @@
 # AppLang
 
-![CI](https://github.com/ITMOdefence/Language/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/ITMOdefence/Gon-On/actions/workflows/ci.yml/badge.svg)
 
 **AppLang** — учебный язык программирования с синтаксисом в духе Kotlin/Java
 и его компилятор в байткод стековой машины. Проект курса «Разработка
