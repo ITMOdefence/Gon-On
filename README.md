@@ -13,6 +13,36 @@
 C/C++ — она не видит код компилятора и работает исключительно по
 спецификации в [`docs/BYTECODE_SPEC.md`](docs/BYTECODE_SPEC.md).
 
+## Как исходный код превращается в байткод
+
+```mermaid
+flowchart TD
+    A["Исходный код .al&#10;например examples/hello_world.al"] --> B
+
+    subgraph ANTLR4["ANTLR4 (генерируется из грамматики)"]
+        B["Lexer + Parser&#10;src/main/antlr/.../AppLang.g4"]
+    end
+
+    B --> C["Parse Tree"]
+    C --> D["AstBuilder&#10;ast/AstBuilder.kt"]
+    D --> E["AST&#10;ast/Ast.kt"]
+    E --> F["TypeChecker&#10;semantic/TypeChecker.kt&#10;резолв имён + проверка типов"]
+    F --> G["Типизированный AST&#10;resolvedType / resolvedSlot заполнены"]
+    G --> H["BytecodeEmitter&#10;codegen/BytecodeEmitter.kt&#10;+ codegen/Labels.kt, ConstantPoolBuilder.kt"]
+    H --> I["BytecodeModule&#10;bytecode/BytecodeModule.kt"]
+    I --> J["BytecodeWriter&#10;bytecode/BytecodeWriter.kt"]
+    J --> K["Бинарный файл байткода .albc"]
+    I --> L["Disassembler&#10;bytecode/Disassembler.kt"]
+    L --> M["Текстовый дамп .albc.asm"]
+```
+
+Если на любом из шагов "AstBuilder → TypeChecker" находится ошибка
+(синтаксическая или семантическая), пайплайн останавливается и CLI
+(`cli/Main.kt`) печатает диагностики вместо генерации байткода — до
+`BytecodeEmitter` дело не доходит. Подробнее про каждый шаг — в
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), про сам формат `.albc` —
+в [`docs/BYTECODE_SPEC.md`](docs/BYTECODE_SPEC.md).
+
 ## Статус
 
 Текущая версия — **v1**: процедурный базис языка (без классов/ООП). Это не
