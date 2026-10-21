@@ -37,7 +37,7 @@ class TypeCheckerTest {
             "fun main(): Int { return 1 + 2; }",
             "fun main(): Int { var x: Int = 1; x = x + 1; return x; }",
             "fun main() { val greeting: String = \"hi\" + \"!\"; println(greeting); }",
-            "fun add(a: Int, b: Int): Int { return a + b; }",
+            "fun add(a: Int, b: Int): Int { return a + b; } fun main() {}",
             "fun main(): Int { if (1 < 2 && true) { return 1; } else { return 0; } }",
             "fun main(): Int { if (true) { return 1; } else { return 0; } }", // return во всех ветках if/else — MISSING_RETURN не должен сработать
             "fun main(): Int { var i: Int = 0; while (i < 10) { i = i + 1; } return i; }",
@@ -258,6 +258,53 @@ class TypeCheckerTest {
         assertFalse(typeCheck(okSource).hasErrors)
         assertTrue(typeCheck(tooManySource).diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
         assertTrue(typeCheck(tooManyParams).diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
+    }
+
+    @ParameterizedTest(name = "программа без main: ''{0}''")
+    @ValueSource(strings = ["", "fun helper(): Int { return 1; }", "fun mainly() {}"])
+    @DisplayName("Программа без main получает диагностику уровня программы без позиции")
+    fun `program without main reports a program-level diagnostic`(source: String) {
+        // Act
+        val collector = typeCheck(source)
+
+        // Assert
+        val diagnostic = collector.diagnostics.single { it.code == SemanticErrorCodes.MISSING_MAIN }
+        assertEquals(null, diagnostic.position)
+    }
+
+    @Test
+    @DisplayName("main с параметрами отклоняется в стандартном режиме с позицией объявления")
+    fun `main with parameters is rejected`() {
+        // Act
+        val collector = typeCheck("fun helper() {}\nfun main(arg: Int) {}")
+
+        // Assert
+        val diagnostic = collector.diagnostics.single { it.code == SemanticErrorCodes.INVALID_MAIN_SIGNATURE }
+        assertEquals(2, diagnostic.position?.line)
+    }
+
+    @Test
+    @DisplayName("Повторное объявление main отклоняется как дубликат")
+    fun `duplicate main is rejected as a duplicate function`() {
+        // Act
+        val collector = typeCheck("fun main() {} fun main() {}")
+
+        // Assert
+        assertTrue(collector.diagnostics.any { it.code == SemanticErrorCodes.DUPLICATE_FUNCTION })
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = [
+            "fun main() {}",
+            "fun main(): Int { return 0; }",
+            "fun main(): Bool { return true; }",
+            "fun main(): String { return \"done\"; }",
+        ],
+    )
+    @DisplayName("main без параметров допустим с любым типом результата")
+    fun `main without parameters is allowed with any result type`(source: String) {
+        assertFalse(typeCheck(source).hasErrors)
     }
 
     @Test

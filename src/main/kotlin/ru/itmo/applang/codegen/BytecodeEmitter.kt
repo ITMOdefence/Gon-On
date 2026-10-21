@@ -25,6 +25,7 @@ import ru.itmo.applang.bytecode.BytecodeModule
 import ru.itmo.applang.bytecode.FormatLimits
 import ru.itmo.applang.bytecode.FunctionEntry
 import ru.itmo.applang.bytecode.Instruction
+import ru.itmo.applang.semantic.ENTRY_POINT_NAME
 
 private val BUILTIN_NAMES = setOf("print", "println")
 
@@ -52,10 +53,11 @@ class BytecodeEmitter {
 
     fun emit(program: Program): BytecodeModule {
         val functionIndexByName = program.functions.withIndex().associate { (index, f) -> f.name to index }
-        val entryIndex = functionIndexByName["main"]
-            ?: throw IllegalArgumentException(
-                "в программе нет функции 'main' — v1 требует явную точку входа (см. LANGUAGE_SPEC.md)",
-            )
+        // Наличие и сигнатуру main проверяет TypeChecker (MISSING_MAIN / INVALID_MAIN_SIGNATURE);
+        // здесь её отсутствие — нарушение инварианта пайплайна, а не ошибка пользователя.
+        val entryIndex = checkNotNull(functionIndexByName[ENTRY_POINT_NAME]) {
+            "TypeChecker пропустил программу без функции '$ENTRY_POINT_NAME'"
+        }
 
         val functions = program.functions.map { function ->
             emitFunction(function, functionIndexByName)

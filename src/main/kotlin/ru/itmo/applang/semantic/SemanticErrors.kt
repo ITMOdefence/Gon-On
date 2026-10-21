@@ -26,4 +26,10 @@ object SemanticErrorCodes {
 
     /** Превышен предел формата `.albc` или реализации компилятора: слоты, параметры, таблицы (BASE-04). */
     const val LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+
+    /** В программе нет функции `main` — точки входа стандартного раннера GVM (BASE-05). */
+    const val MISSING_MAIN = "MISSING_MAIN"
+
+    /** `main` объявлена с параметрами: стандартный раннер GVM запускает entry без аргументов (BASE-05). */
+    const val INVALID_MAIN_SIGNATURE = "INVALID_MAIN_SIGNATURE"
 }

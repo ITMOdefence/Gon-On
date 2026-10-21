@@ -272,4 +272,21 @@ class BytecodeEmitterTest {
         val error = assertThrows(CodegenLimitException::class.java) { BytecodeEmitter().emit(program) }
         assertTrue(error.message!!.contains("65536"))
     }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = [
+            "fun main() {} fun a() {} fun b() {}",
+            "fun a() {} fun main() {} fun b() {}",
+            "fun a() {} fun b() {} fun main() {}",
+        ],
+    )
+    @DisplayName("Индекс entry указывает на main независимо от её положения в исходнике")
+    fun `entry index points to main wherever it is declared`(source: String) {
+        // Act
+        val module = compile(source)
+
+        // Assert
+        assertEquals("main", module.functions[module.entryFunctionIndex].name)
+    }
 }

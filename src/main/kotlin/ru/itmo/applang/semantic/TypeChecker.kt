@@ -29,6 +29,9 @@ import ru.itmo.applang.diagnostics.SourcePosition
 /** Встроенные функции AppLang v1. Не являются пользовательскими функциями и не попадают в [FunctionTable]. */
 private val BUILTIN_NAMES = setOf("print", "println")
 
+/** Имя функции — точки входа исполняемой программы. */
+const val ENTRY_POINT_NAME = "main"
+
 /** Типы, значения которых умеют печатать PRINT/PRINTLN GVM. */
 private val PRINTABLE_TYPES = setOf(Type.INT, Type.BOOL, Type.STRING)
 
@@ -50,8 +53,36 @@ class TypeChecker(private val collector: DiagnosticCollector) {
 
     fun check(program: Program) {
         collectFunctionSignatures(program)
+        checkEntryPoint(program)
         for (function in program.functions) {
             checkFunctionBody(function)
+        }
+    }
+
+    /**
+     * Профиль исполняемой программы для стандартного раннера GVM: ровно одна функция `main` без
+     * параметров (повторное объявление ловит общее правило дубликатов). Формат `.albc` хранит
+     * только индекс entry; выбор функции по имени `main` и требование запуска без аргументов —
+     * правило языка, а не загрузчика. Тип результата `main` не ограничивается: значение,
+     * возвращённое `main`, не является кодом завершения процесса раннера.
+     */
+    private fun checkEntryPoint(program: Program) {
+        val main = program.functions.firstOrNull { it.name == ENTRY_POINT_NAME }
+        if (main == null) {
+            collector.error(
+                SemanticErrorCodes.MISSING_MAIN,
+                "в программе нет функции '$ENTRY_POINT_NAME' — точки входа исполняемой программы",
+                null,
+            )
+            return
+        }
+        if (main.params.isNotEmpty()) {
+            collector.error(
+                SemanticErrorCodes.INVALID_MAIN_SIGNATURE,
+                "функция '$ENTRY_POINT_NAME' не должна иметь параметров: стандартный раннер GVM " +
+                    "запускает точку входа без аргументов",
+                main.position,
+            )
         }
     }
 
