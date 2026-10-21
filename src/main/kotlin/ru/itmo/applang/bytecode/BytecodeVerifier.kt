@@ -32,12 +32,14 @@ object BytecodeVerifier {
         NONE,
     }
 
-    private val SUPPORTED_VERSIONS = setOf(1 to 0)
+    /** Имя класса и поля в ClassTable 2.0 — идентификатор Go&on. */
+    private val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
     fun verify(module: BytecodeModule) {
         verifyHeader(module)
         verifyConstants(module)
         verifyFunctionTable(module)
+        verifyClassTable(module)
         val returnModes = module.functions.mapIndexed { index, function -> returnModeOf(index, function) }
         module.functions.forEachIndexed { index, function ->
             val offsets = instructionOffsets(index, function)
@@ -51,12 +53,83 @@ object BytecodeVerifier {
         module.functions.mapIndexed { index, function -> returnModeOf(index, function) }
 
     private fun verifyHeader(module: BytecodeModule) {
-        if ((module.versionMajor to module.versionMinor) !in SUPPORTED_VERSIONS) {
+        if ((module.versionMajor to module.versionMinor) !in BytecodeModule.SUPPORTED_VERSIONS) {
             fail(
                 BytecodeIssue.VERSION,
                 "версия формата ${module.versionMajor}.${module.versionMinor} не поддерживается " +
-                    "(поддерживается ${SUPPORTED_VERSIONS.joinToString { "${it.first}.${it.second}" }})",
+                    "(поддерживаются ${BytecodeModule.SUPPORTED_VERSIONS.joinToString { "${it.first}.${it.second}" }})",
             )
+        }
+        if (!module.isObjectProfile && module.classes.isNotEmpty()) {
+            fail(BytecodeIssue.LAYOUT, "в профиле 1.0 нет таблицы классов, а модуль содержит ${module.classes.size} классов")
+        }
+    }
+
+    /**
+     * ClassTable 2.0: имена классов и полей — непустые идентификаторы, уникальные (классы — в
+     * модуле, поля — в классе); тип-класс поля ссылается на существующий класс; метод — функция
+     * общей таблицы с `this` (param_count >= 1), принадлежащая ровно одному классу. Точка входа
+     * 2.0 запускается без аргументов и методом не является.
+     */
+    private fun verifyClassTable(module: BytecodeModule) {
+        if (!module.isObjectProfile) return
+        if (module.classes.size > FormatLimits.MAX_TABLE_ENTRIES) {
+            fail(BytecodeIssue.LAYOUT, "таблица содержит ${module.classes.size} классов, максимум ${FormatLimits.MAX_TABLE_ENTRIES}")
+        }
+        val entry = module.functions[module.entryFunctionIndex]
+        if (entry.paramCount != 0) {
+            fail(BytecodeIssue.ENTRY, "точка входа '${entry.name}' профиля 2.0 должна иметь param_count = 0, а не ${entry.paramCount}")
+        }
+
+        val classNames = mutableSetOf<String>()
+        val methodOwners = mutableMapOf<Int, Int>()
+        module.classes.forEachIndexed { classIndex, classEntry ->
+            val where = "класс #$classIndex '${classEntry.name}'"
+            checkName(module, classEntry.nameConstIndex, classEntry.name, BytecodeIssue.CLASS_NAME, where)
+            if (!classNames.add(classEntry.name)) {
+                fail(BytecodeIssue.CLASS_NAME, "$where: имя класса повторяется")
+            }
+            if (classEntry.fields.size > FormatLimits.MAX_TABLE_ENTRIES || classEntry.methodFunctionIndices.size > FormatLimits.MAX_TABLE_ENTRIES) {
+                fail(BytecodeIssue.LAYOUT, "$where: число полей или методов не помещается в u16")
+            }
+
+            val fieldNames = mutableSetOf<String>()
+            classEntry.fields.forEachIndexed { fieldIndex, field ->
+                val fieldWhere = "$where, поле #$fieldIndex '${field.name}'"
+                checkName(module, field.nameConstIndex, field.name, BytecodeIssue.FIELD_NAME, fieldWhere)
+                if (!fieldNames.add(field.name)) {
+                    fail(BytecodeIssue.FIELD_NAME, "$fieldWhere: имя поля повторяется в классе")
+                }
+                val type = field.type
+                if (type is FieldType.ObjectType && type.classIndex !in module.classes.indices) {
+                    fail(BytecodeIssue.FIELD_TYPE, "$fieldWhere: тип-класс #${type.classIndex} вне таблицы классов")
+                }
+            }
+
+            for (functionIndex in classEntry.methodFunctionIndices) {
+                val method = module.functions.getOrNull(functionIndex)
+                    ?: fail(BytecodeIssue.METHOD_INDEX, "$where: метод #$functionIndex вне таблицы функций")
+                if (method.paramCount < 1) {
+                    fail(BytecodeIssue.METHOD_INDEX, "$where: у метода '${method.name}' нет параметра this (param_count = 0)")
+                }
+                methodOwners.put(functionIndex, classIndex)?.let { previous ->
+                    fail(BytecodeIssue.METHOD_INDEX, "$where: функция '${method.name}' уже является методом класса #$previous")
+                }
+                if (functionIndex == module.entryFunctionIndex) {
+                    fail(BytecodeIssue.ENTRY, "$where: точка входа '${method.name}' не может быть методом")
+                }
+            }
+        }
+    }
+
+    private fun checkName(module: BytecodeModule, constIndex: Int, name: String, issue: BytecodeIssue, where: String) {
+        val constant = module.constants.getOrNull(constIndex) as? ConstantValue.StringConst
+            ?: fail(issue, "$where: name_const_idx = $constIndex не ссылается на String-константу")
+        if (constant.value != name) {
+            fail(issue, "$where: имя в модели не совпадает с константой '${constant.value}'")
+        }
+        if (!IDENTIFIER.matches(name)) {
+            fail(issue, "$where: имя '$name' не является идентификатором Go&on")
         }
     }
 
@@ -140,6 +213,9 @@ object BytecodeVerifier {
         val codeLength = offsets.last()
         function.instructions.forEachIndexed { i, instruction ->
             val where = "${functionContext(index, function)}, +${offsets[i]} ${instruction.opcode}"
+            if (instruction.opcode.sinceVersionMajor > module.versionMajor) {
+                fail(BytecodeIssue.OPCODE, "$where: опкод недопустим в профиле ${module.versionMajor}.${module.versionMinor}")
+            }
             when (instruction) {
                 is Instruction.LoadConst -> if (instruction.constIndex !in module.constants.indices) {
                     fail(
@@ -157,8 +233,25 @@ object BytecodeVerifier {
                         "$where: индекс функции ${instruction.functionIndex} вне таблицы из ${module.functions.size}",
                     )
                 }
+                is Instruction.AllocObject -> checkClass(module, instruction.classIndex, where)
+                is Instruction.GetField -> checkField(module, instruction.classIndex, instruction.fieldIndex, where)
+                is Instruction.SetField -> checkField(module, instruction.classIndex, instruction.fieldIndex, where)
                 else -> Unit
             }
+        }
+    }
+
+    private fun checkClass(module: BytecodeModule, classIndex: Int, where: String): ClassEntry =
+        module.classes.getOrNull(classIndex)
+            ?: fail(BytecodeIssue.CLASS_INDEX, "$where: индекс класса $classIndex вне таблицы из ${module.classes.size}")
+
+    private fun checkField(module: BytecodeModule, classIndex: Int, fieldIndex: Int, where: String) {
+        val classEntry = checkClass(module, classIndex, where)
+        if (fieldIndex !in classEntry.fields.indices) {
+            fail(
+                BytecodeIssue.FIELD_INDEX,
+                "$where: поле #$fieldIndex вне класса '${classEntry.name}' из ${classEntry.fields.size} полей",
+            )
         }
     }
 
@@ -279,6 +372,9 @@ object BytecodeVerifier {
         }
         Instruction.Return -> StackEffect(1, 0, terminal = true)
         Instruction.ReturnVoid -> StackEffect(0, 0, terminal = true)
+        is Instruction.AllocObject -> StackEffect(0, 1)
+        is Instruction.GetField -> StackEffect(1, 1)
+        is Instruction.SetField -> StackEffect(2, 0)
     }
 
     private fun successors(instruction: Instruction, index: Int, offsets: LongArray, effect: StackEffect): List<Int> {

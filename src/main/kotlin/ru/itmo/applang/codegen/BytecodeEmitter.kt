@@ -73,8 +73,8 @@ class BytecodeEmitter {
         }
 
         return BytecodeModule(
-            versionMajor = BytecodeModule.CURRENT_VERSION_MAJOR,
-            versionMinor = BytecodeModule.CURRENT_VERSION_MINOR,
+            versionMajor = BytecodeModule.PROCEDURAL_VERSION_MAJOR,
+            versionMinor = BytecodeModule.VERSION_MINOR,
             constants = constants,
             functions = functions,
             entryFunctionIndex = entryIndex,

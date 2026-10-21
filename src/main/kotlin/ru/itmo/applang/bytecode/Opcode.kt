@@ -1,15 +1,15 @@
 package ru.itmo.applang.bytecode
 
 /**
- * Единственный source of truth для нумерации опкодов AppLang v1 стековой машины.
+ * Единственный source of truth для нумерации опкодов стековой машины Gon&On.
  * Таблица в docs/BYTECODE_SPEC.md должна дословно соответствовать этому файлу — при добавлении
  * или изменении опкода обновляй оба места в одном коммите.
  *
- * Диапазон 0x01-0x3F зарезервирован за v1. Будущие версии языка добавляют новые опкоды начиная
- * с 0x40, не переиспользуя и не меняя семантику существующих кодов v1 (чтобы старый байткод
- * оставался читаемым будущей ВМ без версионных веток внутри интерпретатора базовых операций).
+ * Диапазон 0x01-0x3F зарезервирован за v1. Профиль 2.0 добавляет ровно 0x40-0x42, не меняя
+ * семантику кодов v1; 0x43 и далее не назначены. [sinceVersionMajor] — минимальная мажорная
+ * версия формата, в которой опкод допустим.
  */
-enum class Opcode(val code: Int, val operandBytes: Int = 0) {
+enum class Opcode(val code: Int, val operandBytes: Int = 0, val sinceVersionMajor: Int = 1) {
     LOAD_CONST(0x01, operandBytes = 2),
     LOAD_LOCAL(0x02, operandBytes = 1),
     STORE_LOCAL(0x03, operandBytes = 1),
@@ -42,6 +42,11 @@ enum class Opcode(val code: Int, val operandBytes: Int = 0) {
     PRINTLN(0x18),
 
     POP(0x19),
+
+    // Профиль 2.0 (docs/backlog/bytecode-contract.md §7.2). В файле 1.0 эти коды отклоняются.
+    ALLOC_OBJECT(0x40, operandBytes = 2, sinceVersionMajor = 2),
+    GET_FIELD(0x41, operandBytes = 4, sinceVersionMajor = 2),
+    SET_FIELD(0x42, operandBytes = 4, sinceVersionMajor = 2),
     ;
 
     /** Полная длина закодированной инструкции: байт опкода и операнды фиксированной ширины. */

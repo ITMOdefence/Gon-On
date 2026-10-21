@@ -13,7 +13,7 @@ import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** Модуль со всеми опкодами v1 — структурно сериализуемый, но не обязательно проходящий проверку стека. */
+/** Модуль со всеми опкодами 1.0 и 2.0 — структурно сериализуемый, но не обязательно проходящий проверку стека. */
 private fun allOpcodesModule(): BytecodeModule {
     val constants = listOf(
         ConstantValue.IntConst(42),
@@ -42,14 +42,23 @@ private fun allOpcodesModule(): BytecodeModule {
             Instruction.CmpLe, Instruction.CmpGe, Instruction.Not,
             Instruction.Print, Instruction.Println, Instruction.Pop,
             Instruction.Return, Instruction.ReturnVoid,
+            Instruction.AllocObject(0), Instruction.GetField(0, 1), Instruction.SetField(0, 1),
         ),
     )
     return BytecodeModule(
-        versionMajor = BytecodeModule.CURRENT_VERSION_MAJOR,
-        versionMinor = BytecodeModule.CURRENT_VERSION_MINOR,
+        versionMajor = 2,
+        versionMinor = BytecodeModule.VERSION_MINOR,
         constants = constants,
         functions = listOf(mainFunction),
         entryFunctionIndex = 0,
+        classes = listOf(
+            ClassEntry(
+                name = "main",
+                nameConstIndex = 4,
+                fields = listOf(FieldEntry("main", 4, FieldType.IntType), FieldEntry("main", 4, FieldType.ObjectType(0))),
+                methodFunctionIndices = listOf(0),
+            ),
+        ),
     )
 }
 
@@ -90,8 +99,8 @@ class BytecodeWriterReaderTest {
     }
 
     @Test
-    @DisplayName("Сериализация всех опкодов v1 симметрична структурному чтению")
-    fun `every v1 opcode round trips through serialization`() {
+    @DisplayName("Сериализация всех опкодов и ClassTable симметрична структурному чтению")
+    fun `every opcode and the class table round trip through serialization`() {
         // Arrange
         val original = allOpcodesModule()
 

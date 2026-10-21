@@ -49,4 +49,13 @@ sealed class Instruction(val opcode: Opcode) {
     data object Println : Instruction(Opcode.PRINTLN)
 
     data object Pop : Instruction(Opcode.POP)
+
+    /** Профиль 2.0: создать экземпляр класса со служебными NULL-полями; конструктор не вызывается. */
+    data class AllocObject(val classIndex: Int) : Instruction(Opcode.ALLOC_OBJECT)
+
+    /** Профиль 2.0: `[receiver] -> [value]`, receiver обязан быть экземпляром именно [classIndex]. */
+    data class GetField(val classIndex: Int, val fieldIndex: Int) : Instruction(Opcode.GET_FIELD)
+
+    /** Профиль 2.0: `[receiver, value] -> []`, значение должно соответствовать объявленному типу поля. */
+    data class SetField(val classIndex: Int, val fieldIndex: Int) : Instruction(Opcode.SET_FIELD)
 }

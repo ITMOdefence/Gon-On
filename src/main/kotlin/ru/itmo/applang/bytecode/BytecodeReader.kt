@@ -41,11 +41,11 @@ object BytecodeReader {
         }
         val versionMajor = input.u16("version_major")
         val versionMinor = input.u16("version_minor")
-        if (versionMajor != BytecodeModule.CURRENT_VERSION_MAJOR || versionMinor != BytecodeModule.CURRENT_VERSION_MINOR) {
+        if ((versionMajor to versionMinor) !in BytecodeModule.SUPPORTED_VERSIONS) {
             fail(
                 BytecodeIssue.VERSION,
                 "версия формата $versionMajor.$versionMinor не поддерживается " +
-                    "(поддерживается ${BytecodeModule.CURRENT_VERSION_MAJOR}.${BytecodeModule.CURRENT_VERSION_MINOR})",
+                    "(поддерживаются ${BytecodeModule.SUPPORTED_VERSIONS.joinToString { "${it.first}.${it.second}" }})",
             )
         }
         val flags = input.u16("flags")
@@ -59,6 +59,8 @@ object BytecodeReader {
         if (entryFunctionIndex >= functionHeaders.size) {
             fail(BytecodeIssue.ENTRY, "entry_function_idx = $entryFunctionIndex вне таблицы из ${functionHeaders.size} функций")
         }
+        // ClassTable есть только в профиле 2.0 и лежит до code_size.
+        val classes = if (versionMajor == BytecodeModule.OBJECT_VERSION_MAJOR) readClassTable(input, constants) else emptyList()
 
         val codeSize = input.u32("code_size")
         if (codeSize > FormatLimits.MAX_CODE_BYTES) {
@@ -81,11 +83,57 @@ object BytecodeReader {
                 nameConstIndex = header.nameConstIndex,
                 paramCount = header.paramCount,
                 localCount = header.localCount,
-                instructions = decodeInstructions(codeBytes, header, index, name.value),
+                instructions = decodeInstructions(codeBytes, header, index, name.value, versionMajor),
             )
         }
-        return BytecodeModule(versionMajor, versionMinor, constants, functions, entryFunctionIndex)
+        return BytecodeModule(versionMajor, versionMinor, constants, functions, entryFunctionIndex, classes)
     }
+
+    private fun readClassTable(input: Cursor, constants: List<ConstantValue>): List<ClassEntry> {
+        val classCount = input.u16("class_count")
+        val classes = (0 until classCount).map { classIndex ->
+            val classNameIndex = input.u16("name_const_idx класса #$classIndex")
+            val className = stringConstant(constants, classNameIndex)
+                ?: fail(BytecodeIssue.CLASS_NAME, "класс #$classIndex: name_const_idx = $classNameIndex не ссылается на String-константу")
+            val fieldCount = input.u16("field_count класса #$classIndex")
+            val fields = (0 until fieldCount).map { fieldIndex ->
+                val where = "поле #$fieldIndex класса #$classIndex '$className'"
+                val fieldNameIndex = input.u16("name_const_idx, $where")
+                val fieldName = stringConstant(constants, fieldNameIndex)
+                    ?: fail(BytecodeIssue.FIELD_NAME, "$where: name_const_idx = $fieldNameIndex не ссылается на String-константу")
+                val tag = input.u8("type_tag, $where")
+                val typeClassIndex = input.u16("type_class_idx, $where")
+                FieldEntry(fieldName, fieldNameIndex, fieldType(tag, typeClassIndex, classCount, where))
+            }
+            val methodCount = input.u16("method_count класса #$classIndex")
+            val methods = (0 until methodCount).map { input.u16("function_idx метода #$it класса #$classIndex") }
+            ClassEntry(className, classNameIndex, fields, methods)
+        }
+        return classes
+    }
+
+    /** Каноническая пара тега и индекса: 1/2/3 только с 0xFFFF, 4 только с индексом существующего класса. */
+    private fun fieldType(tag: Int, classIndex: Int, classCount: Int, where: String): FieldType {
+        val builtin = when (tag) {
+            FieldType.TAG_INT -> FieldType.IntType
+            FieldType.TAG_BOOL -> FieldType.BoolType
+            FieldType.TAG_STRING -> FieldType.StringType
+            FieldType.TAG_OBJECT -> {
+                if (classIndex >= classCount) {
+                    fail(BytecodeIssue.FIELD_TYPE, "$where: тип-класс #$classIndex вне таблицы из $classCount классов")
+                }
+                return FieldType.ObjectType(classIndex)
+            }
+            else -> fail(BytecodeIssue.FIELD_TYPE, "$where: неизвестный type_tag $tag")
+        }
+        if (classIndex != FormatLimits.NO_CLASS_INDEX) {
+            fail(BytecodeIssue.FIELD_TYPE, "$where: у встроенного типа type_class_idx = $classIndex вместо 0xFFFF")
+        }
+        return builtin
+    }
+
+    private fun stringConstant(constants: List<ConstantValue>, index: Int): String? =
+        (constants.getOrNull(index) as? ConstantValue.StringConst)?.value
 
     private fun readConstants(input: Cursor): List<ConstantValue> {
         val count = input.u16("constant_count")
@@ -159,7 +207,13 @@ object BytecodeReader {
         }
     }
 
-    private fun decodeInstructions(codeBytes: ByteArray, header: FunctionHeader, index: Int, name: String): List<Instruction> {
+    private fun decodeInstructions(
+        codeBytes: ByteArray,
+        header: FunctionHeader,
+        index: Int,
+        name: String,
+        versionMajor: Int,
+    ): List<Instruction> {
         val start = header.codeOffset.toInt()
         val end = start + header.codeLength.toInt()
         val input = Cursor(codeBytes, start, end)
@@ -170,6 +224,9 @@ object BytecodeReader {
             val opcodeByte = input.u8(where)
             val opcode = Opcode.fromCodeOrNull(opcodeByte)
                 ?: fail(BytecodeIssue.OPCODE, "$where: неизвестный опкод 0x${opcodeByte.toString(16).padStart(2, '0')}")
+            if (opcode.sinceVersionMajor > versionMajor) {
+                fail(BytecodeIssue.OPCODE, "$where: опкод $opcode недопустим в профиле $versionMajor.0")
+            }
             if (input.remaining < opcode.operandBytes) {
                 fail(BytecodeIssue.OPERAND, "$where: операнд $opcode обрезан концом функции")
             }
@@ -199,6 +256,9 @@ object BytecodeReader {
                 Opcode.PRINT -> Instruction.Print
                 Opcode.PRINTLN -> Instruction.Println
                 Opcode.POP -> Instruction.Pop
+                Opcode.ALLOC_OBJECT -> Instruction.AllocObject(input.u16(where))
+                Opcode.GET_FIELD -> Instruction.GetField(input.u16(where), input.u16(where))
+                Opcode.SET_FIELD -> Instruction.SetField(input.u16(where), input.u16(where))
             }
         }
         return result

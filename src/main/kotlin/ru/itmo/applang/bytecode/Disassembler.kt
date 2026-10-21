@@ -19,12 +19,25 @@ object Disassembler {
         }
         sb.appendLine()
 
+        // ClassTable есть только в профиле 2.0; дамп 1.0 не меняется.
+        module.classes.forEachIndexed { index, classEntry ->
+            sb.appendLine(".class ${classEntry.name}  ; class $index")
+            classEntry.fields.forEachIndexed { fieldIndex, field ->
+                sb.appendLine("  field $fieldIndex: ${field.name} ${formatFieldType(module, field.type)}")
+            }
+            classEntry.methodFunctionIndices.forEach { functionIndex ->
+                val name = module.functions.getOrNull(functionIndex)?.name ?: "?"
+                sb.appendLine("  method $functionIndex: $name")
+            }
+            sb.appendLine()
+        }
+
         module.functions.forEachIndexed { index, function ->
             val marker = if (index == module.entryFunctionIndex) "  ; entry point" else ""
             sb.appendLine(".function ${function.name}(params=${function.paramCount}, locals=${function.localCount})$marker")
             var offset = 0
             for (instruction in function.instructions) {
-                sb.appendLine("  %04d: %s".format(offset, formatInstruction(instruction)))
+                sb.appendLine("  %04d: %s".format(offset, formatInstruction(module, instruction)))
                 offset += instruction.byteSize
             }
             sb.appendLine()
@@ -49,7 +62,20 @@ object Disassembler {
         return "\"$escaped\""
     }
 
-    private fun formatInstruction(instruction: Instruction): String = when (instruction) {
+    private fun formatFieldType(module: BytecodeModule, type: FieldType): String = when (type) {
+        FieldType.IntType -> "Int"
+        FieldType.BoolType -> "Bool"
+        FieldType.StringType -> "String"
+        is FieldType.ObjectType -> module.classes.getOrNull(type.classIndex)?.name ?: "class#${type.classIndex}"
+    }
+
+    /** Имя `Класс.поле` для комментария к GET_FIELD/SET_FIELD; индексы проверены верификатором. */
+    private fun fieldName(module: BytecodeModule, classIndex: Int, fieldIndex: Int): String {
+        val classEntry = module.classes.getOrNull(classIndex) ?: return "?"
+        return "${classEntry.name}.${classEntry.fields.getOrNull(fieldIndex)?.name ?: "?"}"
+    }
+
+    private fun formatInstruction(module: BytecodeModule, instruction: Instruction): String = when (instruction) {
         is Instruction.LoadConst -> "LOAD_CONST ${instruction.constIndex}"
         is Instruction.LoadLocal -> "LOAD_LOCAL ${instruction.slot}"
         is Instruction.StoreLocal -> "STORE_LOCAL ${instruction.slot}"
@@ -75,5 +101,13 @@ object Disassembler {
         Instruction.Print -> "PRINT"
         Instruction.Println -> "PRINTLN"
         Instruction.Pop -> "POP"
+        is Instruction.AllocObject ->
+            "ALLOC_OBJECT ${instruction.classIndex}  ; ${module.classes.getOrNull(instruction.classIndex)?.name ?: "?"}"
+        is Instruction.GetField ->
+            "GET_FIELD ${instruction.classIndex} ${instruction.fieldIndex}  ; " +
+                fieldName(module, instruction.classIndex, instruction.fieldIndex)
+        is Instruction.SetField ->
+            "SET_FIELD ${instruction.classIndex} ${instruction.fieldIndex}  ; " +
+                fieldName(module, instruction.classIndex, instruction.fieldIndex)
     }
 }

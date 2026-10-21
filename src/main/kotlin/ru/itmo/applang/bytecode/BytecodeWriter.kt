@@ -68,6 +68,9 @@ object BytecodeWriter {
             writeHeader(out, module)
             writeConstants(out, module.constants)
             writeFunctionTable(out, module.functions)
+            if (module.isObjectProfile) {
+                writeClassTable(out, module.classes)
+            }
             writeCodeSection(out, module.functions)
         }
         return buffer.toByteArray()
@@ -150,6 +153,24 @@ object BytecodeWriter {
         }
     }
 
+    /** ClassTable профиля 2.0: между таблицей функций и `code_size`; запись класса — 6 + 5·поля + 2·методы байт. */
+    private fun writeClassTable(out: DataOutputStream, classes: List<ClassEntry>) {
+        out.writeU16(classes.size, "class_count")
+        for (classEntry in classes) {
+            out.writeU16(classEntry.nameConstIndex, "name_const_idx класса '${classEntry.name}'")
+            out.writeU16(classEntry.fields.size, "field_count класса '${classEntry.name}'")
+            for (field in classEntry.fields) {
+                out.writeU16(field.nameConstIndex, "name_const_idx поля '${classEntry.name}.${field.name}'")
+                out.writeU8(field.type.tag, "type_tag поля '${classEntry.name}.${field.name}'")
+                out.writeU16(field.type.classIndex, "type_class_idx поля '${classEntry.name}.${field.name}'")
+            }
+            out.writeU16(classEntry.methodFunctionIndices.size, "method_count класса '${classEntry.name}'")
+            for (functionIndex in classEntry.methodFunctionIndices) {
+                out.writeU16(functionIndex, "function_idx метода класса '${classEntry.name}'")
+            }
+        }
+    }
+
     private fun writeCodeSection(out: DataOutputStream, functions: List<FunctionEntry>) {
         val codeBytes = ByteArrayOutputStream()
         DataOutputStream(codeBytes).use { code ->
@@ -180,6 +201,15 @@ object BytecodeWriter {
             is Instruction.Jump -> out.writeU32(instruction.target.toLong(), "цель JUMP")
             is Instruction.JumpIfFalse -> out.writeU32(instruction.target.toLong(), "цель JUMP_IF_FALSE")
             is Instruction.Call -> out.writeU16(instruction.functionIndex, "индекс функции CALL")
+            is Instruction.AllocObject -> out.writeU16(instruction.classIndex, "индекс класса ALLOC_OBJECT")
+            is Instruction.GetField -> {
+                out.writeU16(instruction.classIndex, "индекс класса GET_FIELD")
+                out.writeU16(instruction.fieldIndex, "индекс поля GET_FIELD")
+            }
+            is Instruction.SetField -> {
+                out.writeU16(instruction.classIndex, "индекс класса SET_FIELD")
+                out.writeU16(instruction.fieldIndex, "индекс поля SET_FIELD")
+            }
             // Инструкции без операндов: только что записанного байта опкода достаточно.
             Instruction.Add, Instruction.Sub, Instruction.Mul, Instruction.Div, Instruction.Mod,
             Instruction.Neg, Instruction.Concat, Instruction.CmpEq, Instruction.CmpNe,
