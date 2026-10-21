@@ -62,3 +62,16 @@ tasks.test {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+// Набор .albc-файлов совместимости для команды GVM: корректные файлы с ожидаемым выводом и
+// испорченные с ожидаемой категорией отказа + manifest.json (src/test/.../compat/ConformanceCorpus.kt).
+tasks.register<JavaExec>("conformanceCorpus") {
+    group = "verification"
+    description = "Собирает набор совместимости .albc и manifest.json в build/conformance"
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("ru.itmo.applang.compat.ConformanceCorpusKt")
+    workingDir = projectDir
+    val outputDir = layout.buildDirectory.dir("conformance")
+    args(outputDir.get().asFile.absolutePath)
+    outputs.dir(outputDir)
+}

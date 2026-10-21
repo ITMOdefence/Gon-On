@@ -35,3 +35,45 @@ jobs:
             build/test-results/test
             build/reports/tests/test
           retention-days: 14
+
+  # Совместимость с контрактом GVM без самой ВМ: эталонные байты, порча файлов, случайные
+  # программы, модельное исполнение примеров и набор файлов для будущего CI GVM.
+  compat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Compatibility tests
+        run: ./gradlew test --tests 'ru.itmo.applang.compat.*' --no-daemon
+
+      - name: Build conformance corpus
+        run: ./gradlew conformanceCorpus --no-daemon
+
+      - name: Upload conformance corpus
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-corpus
+          path: build/conformance
+          retention-days: 30
+
+      - name: Upload compatibility test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-test-report
+          path: |
+            build/test-results/test
+            build/reports/tests/test
+            build/compat
+          retention-days: 14
