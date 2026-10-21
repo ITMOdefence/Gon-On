@@ -17,4 +17,7 @@ object SemanticErrorCodes {
     const val MISSING_RETURN = "MISSING_RETURN"
     const val UNEXPECTED_RETURN_VALUE = "UNEXPECTED_RETURN_VALUE"
     const val INVALID_OPERAND_TYPE = "INVALID_OPERAND_TYPE"
+
+    /** Вызов функции без результата использован там, где нужно значение (BASE-02). */
+    const val NO_VALUE = "NO_VALUE"
 }

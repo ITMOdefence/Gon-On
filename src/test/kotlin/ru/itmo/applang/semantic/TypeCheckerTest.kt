@@ -131,6 +131,58 @@ class TypeCheckerTest {
         )
     }
 
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = [
+            "fun nothing() {} fun main() { nothing(); }",
+            "fun main() { print(1); println(\"text\"); println(true); }",
+            "fun value(): Int { return 1; } fun main() { value(); }",
+        ],
+    )
+    @DisplayName("Вызов функции без результата допустим как отдельный оператор")
+    fun `unit call is allowed as a standalone statement`(source: String) {
+        // Act
+        val collector = typeCheck(source)
+
+        // Assert
+        assertFalse(collector.hasErrors, "неожиданные диагностики: ${collector.diagnostics}")
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = [
+            "fun nothing() {} fun main() { val x = nothing(); }",
+            "fun main() { var x = println(1); }",
+            "fun nothing() {} fun main() { var x: Int = 1; x = nothing(); }",
+            "fun nothing() {} fun main() { println(nothing()); }",
+            "fun main() { println(println(1)); }",
+            "fun main() { print(print(1)); }",
+            "fun nothing() {} fun main() { nothing() == nothing(); }",
+            "fun nothing() {} fun main() { nothing() != nothing(); }",
+            "fun nothing() {} fun takes(a: Int) {} fun main() { takes(nothing()); }",
+            "fun nothing() {} fun main() { if (nothing()) {} }",
+            "fun nothing() {} fun main() { while (nothing()) {} }",
+            "fun nothing() {} fun main() { val x: Int = 1 + nothing(); }",
+            "fun nothing() {} fun main() { val x: Bool = !nothing(); }",
+            "fun nothing() {} fun main() { val x: Int = -nothing(); }",
+            "fun nothing() {} fun main() { val x: Bool = true && nothing(); }",
+            "fun nothing() {} fun main(): Int { return nothing(); }",
+            "fun nothing() {} fun main() { val x = (nothing()); }",
+            "fun nothing() {} fun main() { println((nothing())); }",
+        ],
+    )
+    @DisplayName("Результат функции без значения нельзя использовать как значение")
+    fun `unit call used as a value is rejected`(source: String) {
+        // Act
+        val collector = typeCheck(source)
+
+        // Assert
+        assertTrue(
+            collector.diagnostics.any { it.code == SemanticErrorCodes.NO_VALUE },
+            "ожидался код '${SemanticErrorCodes.NO_VALUE}', получены: ${collector.diagnostics}",
+        )
+    }
+
     @Test
     @DisplayName("После успешной проверки каждое выражение получает не-null resolvedType")
     fun `every expression gets a resolved type after successful type checking`() {

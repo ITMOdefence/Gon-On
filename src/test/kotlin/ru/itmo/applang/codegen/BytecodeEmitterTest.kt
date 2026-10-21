@@ -225,6 +225,24 @@ class BytecodeEmitterTest {
     }
 
     @Test
+    @DisplayName("Отдельный вызов функции с результатом снимает ненужное значение через POP, а Unit-вызов — нет")
+    fun `standalone call pops its value only when the callee returns one`() {
+        // Arrange
+        val module = compile(
+            "fun value(): Int { return 1; } fun nothing() {} fun main() { value(); nothing(); }",
+        )
+
+        // Act
+        val instructions = module.function("main").instructions
+
+        // Assert
+        assertEquals(
+            listOf(Instruction.Call(0), Instruction.Pop, Instruction.Call(1), Instruction.ReturnVoid),
+            instructions,
+        )
+    }
+
+    @Test
     @DisplayName("Функция с типом возврата Unit заканчивается RETURN_VOID, даже без явного return")
     fun `unit function ends with RETURN_VOID even without explicit return`() {
         // Arrange

@@ -27,6 +27,12 @@ import ru.itmo.applang.diagnostics.SourcePosition
 /** Встроенные функции AppLang v1. Не являются пользовательскими функциями и не попадают в [FunctionTable]. */
 private val BUILTIN_NAMES = setOf("print", "println")
 
+/** Типы, значения которых умеют печатать PRINT/PRINTLN GVM. */
+private val PRINTABLE_TYPES = setOf(Type.INT, Type.BOOL, Type.STRING)
+
+/** Типы, для которых определены CMP_EQ/CMP_NE GVM. */
+private val COMPARABLE_TYPES = setOf(Type.INT, Type.BOOL, Type.STRING)
+
 /**
  * Проверяет имена и типы во всей программе, заполняя [Expr.resolvedType] у каждого выражения.
  * Диагностики собираются в переданный [DiagnosticCollector]; codegen обязан запускаться только
@@ -136,7 +142,7 @@ class TypeChecker(private val collector: DiagnosticCollector) {
                 stmt.position,
             )
         }
-        val initType = checkExpr(stmt.initializer, scope)
+        val initType = checkValueExpr(stmt.initializer, scope, "инициализатор переменной '${stmt.name}'")
         val declaredType = stmt.declaredType
         val effectiveType = when {
             declaredType == null -> initType
@@ -164,7 +170,7 @@ class TypeChecker(private val collector: DiagnosticCollector) {
                 "переменная '${stmt.name}' не объявлена",
                 stmt.position,
             )
-            checkExpr(stmt.value, scope)
+            checkValueExpr(stmt.value, scope, "присваивание '${stmt.name}'")
             return
         }
         if (!variable.isMutable) {
@@ -195,14 +201,14 @@ class TypeChecker(private val collector: DiagnosticCollector) {
                 "функция с типом возврата Unit не должна возвращать значение",
                 stmt.position,
             )
-            checkExpr(stmt.value, scope)
+            checkValueExpr(stmt.value, scope, "return")
             return
         }
         checkExpectedType(stmt.value, scope, returnType, "return")
     }
 
     private fun checkExpectedType(expr: Expr, scope: LocalScope, expected: Type, context: String): Type? {
-        val actual = checkExpr(expr, scope)
+        val actual = checkValueExpr(expr, scope, context)
         if (actual != null && actual != expected) {
             collector.error(
                 SemanticErrorCodes.TYPE_MISMATCH,
@@ -211,6 +217,25 @@ class TypeChecker(private val collector: DiagnosticCollector) {
             )
         }
         return actual
+    }
+
+    /**
+     * Проверяет выражение в контексте, которому нужно значение (инициализатор, аргумент, операнд,
+     * условие, возврат). Вызов функции без результата здесь недопустим: он ничего не кладёт на
+     * стек, и инструкции-потребителю не хватило бы операнда (BASE-02). Разрешён такой вызов только
+     * как отдельный оператор — см. [ExprStmt] в [checkStmt].
+     */
+    private fun checkValueExpr(expr: Expr, scope: LocalScope, context: String): Type? {
+        val type = checkExpr(expr, scope)
+        if (type == Type.UNIT) {
+            collector.error(
+                SemanticErrorCodes.NO_VALUE,
+                "$context: выражение не возвращает значения (вызов функции без результата)",
+                expr.position,
+            )
+            return null
+        }
+        return type
     }
 
     /**
@@ -247,7 +272,7 @@ class TypeChecker(private val collector: DiagnosticCollector) {
     }
 
     private fun inferUnaryOp(expr: UnaryOp, scope: LocalScope): Type? {
-        val operandType = checkExpr(expr.operand, scope) ?: return null
+        val operandType = checkValueExpr(expr.operand, scope, "операнд унарной операции") ?: return null
         return when (expr.operator) {
             UnaryOperator.NEG -> requireType(operandType, Type.INT, expr.position, "унарный минус")
             UnaryOperator.NOT -> requireType(operandType, Type.BOOL, expr.position, "логическое отрицание '!'")
@@ -255,8 +280,8 @@ class TypeChecker(private val collector: DiagnosticCollector) {
     }
 
     private fun inferBinaryOp(expr: BinaryOp, scope: LocalScope): Type? {
-        val leftType = checkExpr(expr.left, scope)
-        val rightType = checkExpr(expr.right, scope)
+        val leftType = checkValueExpr(expr.left, scope, "левый операнд")
+        val rightType = checkValueExpr(expr.right, scope, "правый операнд")
         if (leftType == null || rightType == null) return null
 
         return when (expr.operator) {
@@ -271,12 +296,12 @@ class TypeChecker(private val collector: DiagnosticCollector) {
             BinaryOperator.LT, BinaryOperator.GT, BinaryOperator.LE, BinaryOperator.GE ->
                 requireBothType(leftType, rightType, Type.INT, expr, "операция сравнения")?.let { Type.BOOL }
 
-            BinaryOperator.EQ, BinaryOperator.NE -> {
-                if (leftType != rightType) {
+            BinaryOperator.EQ, BinaryOperator.NE -> when {
+                leftType != rightType ->
                     reportOperandMismatch(expr, leftType, rightType, "'==' / '!=' (операнды разных типов)")
-                } else {
-                    Type.BOOL
-                }
+                leftType !in COMPARABLE_TYPES ->
+                    reportOperandMismatch(expr, leftType, rightType, "'==' / '!='")
+                else -> Type.BOOL
             }
 
             BinaryOperator.AND, BinaryOperator.OR ->
@@ -323,7 +348,16 @@ class TypeChecker(private val collector: DiagnosticCollector) {
             }
             // print/println полиморфны по типу аргумента (Int/Bool/String) — это особый случай
             // компилятора, а не обычное разрешение перегрузок пользовательских функций.
-            expr.args.forEach { checkExpr(it, scope) }
+            for (arg in expr.args) {
+                val argType = checkValueExpr(arg, scope, "аргумент '${expr.functionName}'")
+                if (argType != null && argType !in PRINTABLE_TYPES) {
+                    collector.error(
+                        SemanticErrorCodes.ARGUMENT_TYPE_MISMATCH,
+                        "аргумент '${expr.functionName}': ожидался Int, Bool или String, получен $argType",
+                        arg.position,
+                    )
+                }
+            }
             return Type.UNIT
         }
 
@@ -334,7 +368,7 @@ class TypeChecker(private val collector: DiagnosticCollector) {
                 "функция '${expr.functionName}' не объявлена",
                 expr.position,
             )
-            expr.args.forEach { checkExpr(it, scope) }
+            expr.args.forEach { checkValueExpr(it, scope, "аргумент '${expr.functionName}'") }
             return null
         }
 
@@ -345,12 +379,12 @@ class TypeChecker(private val collector: DiagnosticCollector) {
                     "аргумент(ов), передано ${expr.args.size}",
                 expr.position,
             )
-            expr.args.forEach { checkExpr(it, scope) }
+            expr.args.forEach { checkValueExpr(it, scope, "аргумент '${expr.functionName}'") }
             return signature.returnType
         }
 
         for ((arg, expectedType) in expr.args.zip(signature.paramTypes)) {
-            val actualType = checkExpr(arg, scope)
+            val actualType = checkValueExpr(arg, scope, "аргумент '${expr.functionName}'")
             if (actualType != null && actualType != expectedType) {
                 collector.error(
                     SemanticErrorCodes.ARGUMENT_TYPE_MISMATCH,
