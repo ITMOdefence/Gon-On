@@ -100,19 +100,21 @@ exprStmt
     : expr ';'
     ;
 
-// Приоритеты операторов заданы порядком альтернатив (ANTLR left-recursion).
-// Обращение к члену через '.' — самый высокий приоритет: -a.b == -(a.b), a.b.c() == (a.b).c().
+// Приоритеты операторов заданы порядком альтернатив (ANTLR left-recursion): чем выше
+// альтернатива, тем сильнее она связывает. Обращение к члену через '.' — самый высокий приоритет
+// (-a.b == -(a.b), a.b.c() == (a.b).c()), затем унарные '!' и '-' (-a + b == (-a) + b,
+// !a && b == (!a) && b), затем бинарные операторы.
 expr
     : receiver=expr '.' IDENT '(' argList? ')'         # MethodCall
     | receiver=expr '.' IDENT                          # FieldAccess
+    | '!' operand=expr                                  # LogicalNot
+    | '-' operand=expr                                  # UnaryMinus
     | left=expr op=('*'|'/'|'%') right=expr           # MulDivMod
     | left=expr op=('+'|'-') right=expr                # AddSub
     | left=expr op=('<'|'>'|'<='|'>=') right=expr      # Relational
     | left=expr op=('=='|'!=') right=expr              # Equality
     | left=expr '&&' right=expr                        # LogicalAnd
     | left=expr '||' right=expr                        # LogicalOr
-    | '!' operand=expr                                  # LogicalNot
-    | '-' operand=expr                                  # UnaryMinus
     | '(' inner=expr ')'                                # Parens
     | IDENT '(' argList? ')'                            # Call
     | IDENT                                              # VarRef

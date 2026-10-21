@@ -168,4 +168,24 @@ class ParserTest {
         assertEquals("c", assignment.IDENT().text)
         assertEquals("a.b", assignment.receiver.text)
     }
+
+    @Test
+    @DisplayName("Унарные '-' и '!' связывают сильнее бинарных операторов")
+    fun `unary operators bind tighter than binary operators`() {
+        // Arrange: -1 + 2 == (-1) + 2, а не -(1 + 2); !a && b == (!a) && b, а не !(a && b)
+        val source = "fun main() { val x: Int = -1 + 2; val y: Bool = !true && false; val z: Bool = -1 < 2; }"
+
+        // Act
+        val (programCtx, collector) = parse(source)
+        val statements = programCtx.topLevelDecl(0).functionDecl().block().statement()
+        val minusPlus = statements[0].varDecl().expr()
+        val notAnd = statements[1].varDecl().expr()
+        val minusLess = statements[2].varDecl().expr()
+
+        // Assert
+        assertFalse(collector.hasErrors)
+        assertTrue(minusPlus is AppLangParser.AddSubContext && minusPlus.left is AppLangParser.UnaryMinusContext)
+        assertTrue(notAnd is AppLangParser.LogicalAndContext && notAnd.left is AppLangParser.LogicalNotContext)
+        assertTrue(minusLess is AppLangParser.RelationalContext && minusLess.left is AppLangParser.UnaryMinusContext)
+    }
 }
