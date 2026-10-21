@@ -1,0 +1,60 @@
+; AppLang bytecode disassembly
+; version 1.0
+
+.constants
+  0: Int32 0
+  1: String "absolute"
+  2: String "gcd"
+  3: Int32 36
+  4: Int32 48
+  5: Int32 5
+  6: Int32 17
+  7: String "main"
+
+.function absolute(params=1, locals=1)
+  0000: LOAD_LOCAL 0
+  0002: LOAD_CONST 0
+  0005: CMP_LT
+  0006: JUMP_IF_FALSE 0015
+  0011: LOAD_LOCAL 0
+  0013: NEG
+  0014: RETURN
+  0015: LOAD_LOCAL 0
+  0017: RETURN
+
+.function gcd(params=2, locals=5)
+  0000: LOAD_LOCAL 0
+  0002: CALL 0
+  0005: STORE_LOCAL 2
+  0007: LOAD_LOCAL 1
+  0009: CALL 0
+  0012: STORE_LOCAL 3
+  0014: LOAD_LOCAL 3
+  0016: LOAD_CONST 0
+  0019: CMP_NE
+  0020: JUMP_IF_FALSE 0045
+  0025: LOAD_LOCAL 2
+  0027: LOAD_LOCAL 3
+  0029: MOD
+  0030: STORE_LOCAL 4
+  0032: LOAD_LOCAL 3
+  0034: STORE_LOCAL 2
+  0036: LOAD_LOCAL 4
+  0038: STORE_LOCAL 3
+  0040: JUMP 0014
+  0045: LOAD_LOCAL 2
+  0047: RETURN
+
+.function main(params=0, locals=0)  ; entry point
+  0000: LOAD_CONST 3
+  0003: NEG
+  0004: LOAD_CONST 4
+  0007: CALL 1
+  0010: PRINTLN
+  0011: LOAD_CONST 5
+  0014: LOAD_CONST 6
+  0017: CALL 1
+  0020: PRINTLN
+  0021: LOAD_CONST 0
+  0024: RETURN
+

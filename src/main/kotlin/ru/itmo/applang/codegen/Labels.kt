@@ -36,15 +36,26 @@ class InstructionBuffer {
         instructions += Instruction.JumpIfFalse(UNRESOLVED)
     }
 
-    /** Разрешает все метки и возвращает финальный список инструкций функции. */
+    /**
+     * Разрешает все метки и возвращает финальный список инструкций функции.
+     *
+     * Массив offsets содержит дополнительный элемент — конец кода функции. Он нужен для подсчёта
+     * длины, но не является допустимой целью перехода: GVM требует `0 <= target < code_length`,
+     * то есть метка перехода обязана стоять перед существующей инструкцией (BASE-01).
+     */
     fun build(): List<Instruction> {
-        val offsets = IntArray(instructions.size + 1)
+        val offsets = LongArray(instructions.size + 1)
         for (i in instructions.indices) {
             offsets[i + 1] = offsets[i] + instructions[i].byteSize
         }
         return instructions.mapIndexed { index, instruction ->
             val labelId = jumpLabelRefs[index] ?: return@mapIndexed instruction
-            val targetOffset = offsets[labelPositions.getValue(labelId)]
+            val labelPosition = checkNotNull(labelPositions[labelId]) { "метка $labelId не размещена" }
+            check(labelPosition < instructions.size) {
+                "переход по смещению ${offsets[index]} ведёт на конец функции (смещение ${offsets[labelPosition]}), " +
+                    "а не на начало инструкции"
+            }
+            val targetOffset = Math.toIntExact(offsets[labelPosition])
             when (instruction) {
                 is Instruction.Jump -> Instruction.Jump(targetOffset)
                 is Instruction.JumpIfFalse -> Instruction.JumpIfFalse(targetOffset)

@@ -64,10 +64,10 @@ class BytecodeEmitter {
 
     private fun emitFunction(function: FunctionDecl, functionIndexByName: Map<String, Int>): FunctionEntry {
         val buffer = InstructionBuffer()
-        emitBlock(function.body, buffer, functionIndexByName)
+        val bodyCompletesNormally = emitBlock(function.body, buffer, functionIndexByName)
         // Функции с типом возврата Unit могут не содержать явного return — гарантируем корректное
-        // завершение кадра, если тело "провалилось" до конца без него.
-        if (function.returnType == Type.UNIT) {
+        // завершение кадра, если тело может "провалиться" до конца без него.
+        if (function.returnType == Type.UNIT && bodyCompletesNormally) {
             buffer.emit(Instruction.ReturnVoid)
         }
 
@@ -84,15 +84,23 @@ class BytecodeEmitter {
         )
     }
 
-    private fun emitBlock(block: Block, buffer: InstructionBuffer, funcs: Map<String, Int>) {
+    /**
+     * Генерирует код блока и возвращает, может ли выполнение продолжиться после него
+     * ("завершается нормально"), или все пути блока заканчиваются возвратом. Операторы после
+     * гарантированного возврата недостижимы и не генерируются: GVM проверяет даже недостижимые
+     * инструкции, поэтому лишний код — лишний риск невалидной структуры (BASE-01).
+     */
+    private fun emitBlock(block: Block, buffer: InstructionBuffer, funcs: Map<String, Int>): Boolean {
         for (stmt in block.statements) {
-            emitStmt(stmt, buffer, funcs)
+            if (!emitStmt(stmt, buffer, funcs)) return false
         }
+        return true
     }
 
-    private fun emitStmt(stmt: Stmt, buffer: InstructionBuffer, funcs: Map<String, Int>) {
+    /** Генерирует код оператора; возвращает true, если выполнение может продолжиться после него. */
+    private fun emitStmt(stmt: Stmt, buffer: InstructionBuffer, funcs: Map<String, Int>): Boolean {
         when (stmt) {
-            is Block -> emitBlock(stmt, buffer, funcs)
+            is Block -> return emitBlock(stmt, buffer, funcs)
 
             is VarDecl -> {
                 emitExpr(stmt.initializer, buffer, funcs)
@@ -104,8 +112,8 @@ class BytecodeEmitter {
                 buffer.emit(Instruction.StoreLocal(stmt.resolvedSlot))
             }
 
-            is If -> emitIf(stmt, buffer, funcs)
-            is While -> emitWhile(stmt, buffer, funcs)
+            is If -> return emitIf(stmt, buffer, funcs)
+            is While -> return emitWhile(stmt, buffer, funcs)
 
             is Return -> {
                 if (stmt.value != null) {
@@ -114,6 +122,7 @@ class BytecodeEmitter {
                 } else {
                     buffer.emit(Instruction.ReturnVoid)
                 }
+                return false
             }
 
             is ExprStmt -> {
@@ -126,36 +135,52 @@ class BytecodeEmitter {
                 }
             }
         }
+        return true
     }
 
-    private fun emitIf(stmt: If, buffer: InstructionBuffer, funcs: Map<String, Int>) {
+    /**
+     * Переход к общей конечной метке ставится после then-ветки только если она может завершиться
+     * нормально: после ветки, которая всегда возвращает, такой JUMP недостижим, а когда обе ветки
+     * возвращают, его цель совпала бы с концом функции (`target == code_length`), что GVM
+     * отвергает (BASE-01).
+     */
+    private fun emitIf(stmt: If, buffer: InstructionBuffer, funcs: Map<String, Int>): Boolean {
         emitExpr(stmt.condition, buffer, funcs)
         if (stmt.elseBranch == null) {
             val endLabel = buffer.newLabel()
             buffer.emitJumpIfFalse(endLabel)
             emitBlock(stmt.thenBranch, buffer, funcs)
             buffer.placeLabel(endLabel)
-        } else {
-            val elseLabel = buffer.newLabel()
-            val endLabel = buffer.newLabel()
-            buffer.emitJumpIfFalse(elseLabel)
-            emitBlock(stmt.thenBranch, buffer, funcs)
-            buffer.emitJump(endLabel)
-            buffer.placeLabel(elseLabel)
-            emitBlock(stmt.elseBranch, buffer, funcs)
-            buffer.placeLabel(endLabel)
+            return true
         }
+        val elseLabel = buffer.newLabel()
+        val endLabel = buffer.newLabel()
+        buffer.emitJumpIfFalse(elseLabel)
+        val thenCompletes = emitBlock(stmt.thenBranch, buffer, funcs)
+        if (thenCompletes) {
+            buffer.emitJump(endLabel)
+        }
+        buffer.placeLabel(elseLabel)
+        val elseCompletes = emitBlock(stmt.elseBranch, buffer, funcs)
+        buffer.placeLabel(endLabel)
+        return thenCompletes || elseCompletes
     }
 
-    private fun emitWhile(stmt: While, buffer: InstructionBuffer, funcs: Map<String, Int>) {
+    /**
+     * Цикл считается завершающимся нормально всегда: условие не вычисляется статически, а выход
+     * по `JUMP_IF_FALSE` — допустимый путь. Обратный переход не нужен, если тело всегда возвращает.
+     */
+    private fun emitWhile(stmt: While, buffer: InstructionBuffer, funcs: Map<String, Int>): Boolean {
         val startLabel = buffer.newLabel()
         val endLabel = buffer.newLabel()
         buffer.placeLabel(startLabel)
         emitExpr(stmt.condition, buffer, funcs)
         buffer.emitJumpIfFalse(endLabel)
-        emitBlock(stmt.body, buffer, funcs)
-        buffer.emitJump(startLabel)
+        if (emitBlock(stmt.body, buffer, funcs)) {
+            buffer.emitJump(startLabel)
+        }
         buffer.placeLabel(endLabel)
+        return true
     }
 
     private fun emitExpr(expr: Expr, buffer: InstructionBuffer, funcs: Map<String, Int>) {

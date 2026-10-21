@@ -27,7 +27,7 @@ import java.nio.file.Path
 class EndToEndExamplesTest {
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = ["hello_world", "factorial_while"])
+    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo"])
     @DisplayName("Дизассемблированный вывод компилятора совпадает с golden-файлом примера")
     fun `compiled example matches its golden disassembly`(exampleName: String) {
         // Arrange

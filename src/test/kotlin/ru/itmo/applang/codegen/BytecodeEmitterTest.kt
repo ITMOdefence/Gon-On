@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import ru.itmo.applang.ast.AstBuilder
 import ru.itmo.applang.bytecode.BytecodeModule
 import ru.itmo.applang.bytecode.FunctionEntry
@@ -27,6 +29,19 @@ private fun compile(source: String): BytecodeModule {
     check(!collector.hasErrors) { "тестовая программа должна быть валидна, но есть ошибки: ${collector.diagnostics}" }
 
     return BytecodeEmitter().emit(program)
+}
+
+/** Проверяет требование GVM: цель каждого перехода — начало инструкции, строго меньше длины кода функции. */
+private fun assertAllJumpTargetsAreInstructionStarts(instructions: List<Instruction>) {
+    val starts = instructions.indices.map { byteOffsetOf(instructions, it) }.toSet()
+    val targets = instructions.mapNotNull {
+        when (it) {
+            is Instruction.Jump -> it.target
+            is Instruction.JumpIfFalse -> it.target
+            else -> null
+        }
+    }
+    targets.forEach { assertTrue(it in starts, "цель перехода $it не является началом инструкции: $instructions") }
 }
 
 private fun BytecodeModule.function(name: String): FunctionEntry =
@@ -87,21 +102,60 @@ class BytecodeEmitterTest {
     }
 
     @Test
-    @DisplayName("if с else компилируется в переход в else-ветку и безусловный переход в конец из then-ветки")
-    fun `if with else jumps to else branch and then jumps past it from the then branch`() {
+    @DisplayName("if с else, обе ветки которого возвращают, не содержит перехода на конец функции")
+    fun `if with else where both branches return has no jump past the end of the function`() {
         // Arrange
         val module = compile("fun main(): Int { if (false) { return 1; } else { return 2; } }")
 
         // Act
         val instructions = module.function("main").instructions
-        // 0=LoadConst(false),1=JumpIfFalse(elseLabel),2=LoadConst(1),3=Return,4=Jump(endLabel),
-        // 5=LoadConst(2),6=Return
+        // 0=LoadConst(false),1=JumpIfFalse(elseLabel),2=LoadConst(1),3=Return,4=LoadConst(2),5=Return
 
         // Assert
-        val jumpIfFalseTarget = (instructions[1] as Instruction.JumpIfFalse).target
-        val jumpTarget = (instructions[4] as Instruction.Jump).target
-        assertEquals(byteOffsetOf(instructions, 5), jumpIfFalseTarget, "else-ветка начинается с индекса 5")
-        assertEquals(byteOffsetOf(instructions, 7), jumpTarget, "переход из then ведёт за пределы всего if")
+        assertEquals(6, instructions.size)
+        assertEquals(byteOffsetOf(instructions, 4), (instructions[1] as Instruction.JumpIfFalse).target)
+        assertFalse(instructions.any { it is Instruction.Jump }, "после then-ветки с return переход не нужен")
+        assertAllJumpTargetsAreInstructionStarts(instructions)
+    }
+
+    @Test
+    @DisplayName("if с else, then-ветка которого продолжается, перепрыгивает else к следующей инструкции")
+    fun `if with else jumps over the else branch when the then branch falls through`() {
+        // Arrange
+        val module = compile(
+            "fun main(): Int { var x: Int = 0; if (true) { x = 1; } else { x = 2; } return x; }",
+        )
+
+        // Act
+        val instructions = module.function("main").instructions
+        val jump = instructions.filterIsInstance<Instruction.Jump>().single()
+        val continuationIndex = instructions.indexOfLast { it is Instruction.LoadLocal }
+
+        // Assert
+        assertEquals(byteOffsetOf(instructions, continuationIndex), jump.target)
+        assertAllJumpTargetsAreInstructionStarts(instructions)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+        strings = [
+            "fun main(): Int { if (true) { return 1; } else { return 2; } }",
+            "fun main(): Int { if (true) { return 1; } return 2; }",
+            "fun main(): Int { if (true) { if (false) { return 1; } else { return 2; } } else { return 3; } }",
+            "fun main(): Int { var i: Int = 0; while (i < 3) { if (i == 1) { return i; } i = i + 1; } return 0; }",
+            "fun main(): Int { while (true) { return 1; } return 2; }",
+            "fun main(): Bool { if (true && false || true) { return true || false; } else { return false && true; } }",
+            "fun absolute(x: Int): Int { if (x < 0) { return -x; } else { return x; } } fun main(): Int { return absolute(-5); }",
+            "fun main() { if (true) { return; } else { return; } }",
+        ],
+    )
+    @DisplayName("Все цели переходов указывают на начало существующей инструкции функции")
+    fun `every jump targets the start of an existing instruction`(source: String) {
+        // Act
+        val module = compile(source)
+
+        // Assert
+        module.functions.forEach { assertAllJumpTargetsAreInstructionStarts(it.instructions) }
     }
 
     @Test
