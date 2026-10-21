@@ -32,4 +32,42 @@ object SemanticErrorCodes {
 
     /** `main` объявлена с параметрами: стандартный раннер GVM запускает entry без аргументов (BASE-05). */
     const val INVALID_MAIN_SIGNATURE = "INVALID_MAIN_SIGNATURE"
+
+    // ---- Классы и объекты (docs/LANGUAGE_SPEC.md, раздел 7) ----
+
+    /** Тип или создание ссылается на необъявленный класс. */
+    const val UNDEFINED_CLASS = "UNDEFINED_CLASS"
+
+    /** Два класса с одинаковым именем. */
+    const val DUPLICATE_CLASS = "DUPLICATE_CLASS"
+
+    /** Повторное имя поля / метода в классе, поле и метод с одним именем или второй конструктор. */
+    const val DUPLICATE_MEMBER = "DUPLICATE_MEMBER"
+
+    /** Имя класса совпадает с функцией верхнего уровня, либо класс / функция названы print / println. */
+    const val NAME_CONFLICT = "NAME_CONFLICT"
+
+    /** У класса нет поля с таким именем. */
+    const val UNDEFINED_FIELD = "UNDEFINED_FIELD"
+
+    /** У класса нет метода с таким именем. */
+    const val UNDEFINED_METHOD = "UNDEFINED_METHOD"
+
+    /** Обращение к члену у значения, не являющегося объектом (Int, Bool, String). */
+    const val INVALID_RECEIVER = "INVALID_RECEIVER"
+
+    /** `this` вне метода или конструктора. */
+    const val INVALID_THIS = "INVALID_THIS"
+
+    /** Недостроенный `this` раскрыт до заполнения всех полей: передан, сохранён или вызван метод. */
+    const val THIS_ESCAPE = "THIS_ESCAPE"
+
+    /** Поле прочитано до гарантированного заполнения либо не заполнено к концу инициализации. */
+    const val FIELD_NOT_INITIALIZED = "FIELD_NOT_INITIALIZED"
+
+    /** Повторная запись `val`-поля или запись `val`-поля вне инициализации своего экземпляра. */
+    const val VAL_FIELD_REASSIGNMENT = "VAL_FIELD_REASSIGNMENT"
+
+    /** `return` в конструкторе. */
+    const val RETURN_IN_CONSTRUCTOR = "RETURN_IN_CONSTRUCTOR"
 }

@@ -9,7 +9,32 @@ package ru.itmo.applang.parser;
 // ============================================================
 
 program
-    : functionDecl* EOF
+    : topLevelDecl* EOF
+    ;
+
+topLevelDecl
+    : functionDecl
+    | classDecl
+    ;
+
+// Класс: только на верхнем уровне; в теле — только поля, конструктор и методы (LANG-01).
+classDecl
+    : 'class' IDENT '{' classMember* '}'
+    ;
+
+classMember
+    : fieldDecl
+    | constructorDecl
+    | functionDecl
+    ;
+
+// Тип поля всегда указывается явно (LANG-04); инициализатор необязателен.
+fieldDecl
+    : ('var' | 'val') IDENT ':' type ('=' expr)? ';'
+    ;
+
+constructorDecl
+    : 'constructor' '(' paramList? ')' block
     ;
 
 functionDecl
@@ -28,6 +53,7 @@ type
     : 'Int'
     | 'Bool'
     | 'String'
+    | IDENT // пользовательский класс
     ;
 
 block
@@ -37,6 +63,7 @@ block
 statement
     : varDecl
     | assignment
+    | fieldAssignment
     | ifStmt
     | whileStmt
     | returnStmt
@@ -50,6 +77,11 @@ varDecl
 
 assignment
     : IDENT '=' expr ';'
+    ;
+
+// Запись поля — только оператор, как и присваивание локальной переменной (LANG-09).
+fieldAssignment
+    : receiver=expr '.' IDENT '=' value=expr ';'
     ;
 
 ifStmt
@@ -69,8 +101,11 @@ exprStmt
     ;
 
 // Приоритеты операторов заданы порядком альтернатив (ANTLR left-recursion).
+// Обращение к члену через '.' — самый высокий приоритет: -a.b == -(a.b), a.b.c() == (a.b).c().
 expr
-    : left=expr op=('*'|'/'|'%') right=expr           # MulDivMod
+    : receiver=expr '.' IDENT '(' argList? ')'         # MethodCall
+    | receiver=expr '.' IDENT                          # FieldAccess
+    | left=expr op=('*'|'/'|'%') right=expr           # MulDivMod
     | left=expr op=('+'|'-') right=expr                # AddSub
     | left=expr op=('<'|'>'|'<='|'>=') right=expr      # Relational
     | left=expr op=('=='|'!=') right=expr              # Equality
@@ -84,6 +119,7 @@ expr
     | INT_LITERAL                                        # IntLiteral
     | STRING_LITERAL                                      # StringLiteral
     | ('true' | 'false')                                  # BoolLiteral
+    | 'this'                                              # This
     ;
 
 argList
@@ -103,6 +139,9 @@ WHILE: 'while';
 RETURN: 'return';
 TRUE: 'true';
 FALSE: 'false';
+CLASS: 'class';
+CONSTRUCTOR: 'constructor';
+THIS: 'this';
 
 INT_LITERAL
     : [0-9]+

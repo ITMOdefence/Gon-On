@@ -258,6 +258,16 @@ class BytecodeWriterReaderTest {
             Arguments.of("param_count больше local_count", { b: ByteArray -> b.with(39, 1) }, BytecodeIssue.PARAMETERS),
             Arguments.of("смещение функции не равно 0", { b: ByteArray -> b.with(44, 1) }, BytecodeIssue.LAYOUT),
             Arguments.of("длина функции не совпадает с code_size", { b: ByteArray -> b.with(48, 7) }, BytecodeIssue.LAYOUT),
+            Arguments.of(
+                "code_size = 0xFFFFFFFF отклоняется без выделения памяти",
+                { b: ByteArray -> b.with(49, 0xFF).with(50, 0xFF).with(51, 0xFF).with(52, 0xFF) },
+                BytecodeIssue.RESOURCE_LIMIT,
+            ),
+            Arguments.of(
+                "code_size больше оставшихся байт",
+                { b: ByteArray -> b.with(51, 0x01) },
+                BytecodeIssue.TRUNCATED,
+            ),
             Arguments.of("RETURN заменён на RETURN_VOID при значении на стеке", { b: ByteArray -> b.with(b.size - 1, 0x16) }, BytecodeIssue.RETURN),
         )
     }

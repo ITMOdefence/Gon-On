@@ -6,6 +6,13 @@
 - `gcd_demo.al` — алгоритм Евклида; `absolute()` — `if/else`, обе ветки
   которого возвращают значение (после then-ветки переход не генерируется).
   Печатает `12` и `1`.
+- `counter.al` — эталон контракта `.albc` 2.0
+  (`docs/backlog/bytecode-contract.md` §11): класс с `val`-полем,
+  конструктор и метод. Компилируется ровно в 185 байт эталона; `main`
+  возвращает `7`, вывода нет.
+- `objects.al` — несколько классов, поле-объект, две ссылки на один объект,
+  метод с несколькими параметрами, конструктор с ветвлением и инициализаторы
+  полей. Печатает `25`, `6`, `100`, `35`, `3`, `Ann`.
 
 Каждому `.al`-файлу соответствует golden-файл `<name>.albc.asm` —
 зафиксированный дизассемблированный вывод компилятора для этой программы.
@@ -20,6 +27,8 @@ Golden-файлы используются в `e2e/EndToEndExamplesTest` (рег
 ./gradlew run --args="examples/hello_world.al -o /tmp/hello.albc --disasm"
 ./gradlew run --args="examples/factorial_while.al -o /tmp/factorial.albc --disasm"
 ./gradlew run --args="examples/gcd_demo.al -o /tmp/gcd.albc --disasm"
+./gradlew run --args="examples/counter.al -o /tmp/counter.albc --disasm"
+./gradlew run --args="examples/objects.al -o /tmp/objects.albc --disasm"
 ```
 
 ## Обновление golden-файлов
@@ -29,7 +38,7 @@ Golden-файлы используются в `e2e/EndToEndExamplesTest` (рег
 изменение байткода — то, что и ожидалось):
 
 ```bash
-for name in hello_world factorial_while gcd_demo; do
+for name in hello_world factorial_while gcd_demo counter objects; do
   ./gradlew run -q --args="examples/$name.al -o /tmp/$name.albc --disasm" | tail -n +3 > examples/$name.albc.asm
 done
 ```

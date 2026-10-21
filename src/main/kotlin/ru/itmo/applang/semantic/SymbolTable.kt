@@ -1,5 +1,8 @@
 package ru.itmo.applang.semantic
 
+import ru.itmo.applang.ast.ClassDecl
+import ru.itmo.applang.ast.FieldDecl
+import ru.itmo.applang.ast.FunctionDecl
 import ru.itmo.applang.ast.Type
 
 /** Сигнатура функции, собирается первым проходом до анализа тел — для поддержки forward-ссылок. */
@@ -9,7 +12,7 @@ data class FunctionSignature(
     val returnType: Type,
 )
 
-/** Таблица функций верхнего уровня. В AppLang v1 нет вложенных функций. */
+/** Таблица функций верхнего уровня. Вложенных функций нет; методы хранятся в [ClassInfo]. */
 class FunctionTable {
     private val functions = mutableMapOf<String, FunctionSignature>()
 
@@ -63,4 +66,35 @@ class LocalScope {
         scopes.last()[name] = info
         return info
     }
+}
+
+/** Поле класса с устойчивым номером — позицией в объявлении (`field_idx` в байткоде). */
+data class FieldInfo(
+    val name: String,
+    val index: Int,
+    val type: Type,
+    val isMutable: Boolean,
+    val decl: FieldDecl,
+)
+
+/** Метод: функция общей таблицы, принадлежащая ровно одному классу. */
+data class MethodInfo(
+    val owner: ClassInfo,
+    val decl: FunctionDecl,
+    val signature: FunctionSignature,
+)
+
+/**
+ * Символ класса. [index] — позиция в таблице классов (`class_idx`); члены разрешаются по имени
+ * внутри конкретного класса, поэтому одноимённые члены разных классов не смешиваются.
+ */
+class ClassInfo(val decl: ClassDecl, val index: Int) {
+    val name: String get() = decl.name
+    val type: Type.ClassType = Type.ClassType(decl.name)
+
+    val fields = mutableListOf<FieldInfo>()
+    val methods = linkedMapOf<String, MethodInfo>()
+    var constructorParamTypes: List<Type> = emptyList()
+
+    fun field(name: String): FieldInfo? = fields.firstOrNull { it.name == name }
 }

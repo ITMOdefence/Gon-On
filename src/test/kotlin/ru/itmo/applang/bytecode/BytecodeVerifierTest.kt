@@ -163,6 +163,12 @@ class BytecodeVerifierTest {
                 BytecodeIssue.STRING,
             ),
             Arguments.of("индекс константы вне пула", main(LoadConst(99), Return), BytecodeIssue.CONSTANT_INDEX),
+            Arguments.of("отрицательный индекс константы", main(LoadConst(-1), Return), BytecodeIssue.CONSTANT_INDEX),
+            Arguments.of(
+                "индекс константы ровно за пулом",
+                main(LoadConst(3), Return),
+                BytecodeIssue.CONSTANT_INDEX,
+            ),
             Arguments.of("слот вне local_count", main(LoadLocal(1), Return), BytecodeIssue.LOCAL_INDEX),
             Arguments.of("запись в слот вне local_count", main(ONE, StoreLocal(5), ReturnVoid), BytecodeIssue.LOCAL_INDEX),
             Arguments.of("индекс функции вне таблицы", main(Call(7), ReturnVoid), BytecodeIssue.FUNCTION_INDEX),

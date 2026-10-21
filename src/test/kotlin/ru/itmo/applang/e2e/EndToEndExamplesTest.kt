@@ -28,7 +28,7 @@ import java.nio.file.Path
 class EndToEndExamplesTest {
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo"])
+    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo", "counter", "objects"])
     @DisplayName("Записанный файл примера читается строгим reader'ом и совпадает с golden-дампом")
     fun `compiled example file matches its golden disassembly`(exampleName: String, @TempDir directory: Path) {
         // Arrange

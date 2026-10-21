@@ -16,15 +16,44 @@ private fun TerminalNode.pos(): SourcePosition =
 class AstBuilder : AppLangBaseVisitor<Any?>() {
 
     fun buildProgram(ctx: AppLangParser.ProgramContext): Program {
-        val functions = ctx.functionDecl().map { visitFunctionDeclNode(it) }
-        return Program(functions)
+        val declarations = ctx.topLevelDecl().map { decl ->
+            decl.functionDecl()?.let { visitFunctionDeclNode(it) } ?: visitClassDeclNode(decl.classDecl())
+        }
+        return Program(declarations)
     }
+
+    private fun visitClassDeclNode(ctx: AppLangParser.ClassDeclContext): ClassDecl {
+        val fields = mutableListOf<FieldDecl>()
+        val constructors = mutableListOf<ConstructorDecl>()
+        val methods = mutableListOf<FunctionDecl>()
+        for (member in ctx.classMember()) {
+            member.fieldDecl()?.let { field ->
+                fields += FieldDecl(
+                    name = field.IDENT().text,
+                    isMutable = field.VAR() != null,
+                    type = parseType(field.type()),
+                    initializer = field.expr()?.let { visitExprNode(it) },
+                    position = field.pos(),
+                )
+            }
+            member.constructorDecl()?.let { constructor ->
+                constructors += ConstructorDecl(
+                    params = visitParams(constructor.paramList()),
+                    body = visitBlockNode(constructor.block()),
+                    position = constructor.pos(),
+                )
+            }
+            member.functionDecl()?.let { methods += visitFunctionDeclNode(it) }
+        }
+        return ClassDecl(ctx.IDENT().text, fields, constructors, methods, ctx.pos())
+    }
+
+    private fun visitParams(ctx: AppLangParser.ParamListContext?): List<Param> =
+        ctx?.param().orEmpty().map { p -> Param(p.IDENT().text, parseType(p.type()), p.IDENT().pos()) }
 
     private fun visitFunctionDeclNode(ctx: AppLangParser.FunctionDeclContext): FunctionDecl {
         val name = ctx.IDENT().text
-        val params = ctx.paramList()?.param().orEmpty().map { p ->
-            Param(p.IDENT().text, parseType(p.type()), p.IDENT().pos())
-        }
+        val params = visitParams(ctx.paramList())
         val returnType = ctx.type()?.let { parseType(it) } ?: Type.UNIT
         val body = visitBlockNode(ctx.block())
         return FunctionDecl(name, params, returnType, body, ctx.pos())
@@ -34,7 +63,7 @@ class AstBuilder : AppLangBaseVisitor<Any?>() {
         "Int" -> Type.INT
         "Bool" -> Type.BOOL
         "String" -> Type.STRING
-        else -> error("Неизвестный тип в грамматике: ${ctx.text}")
+        else -> Type.ClassType(ctx.text) // существование класса проверяет TypeChecker
     }
 
     private fun visitBlockNode(ctx: AppLangParser.BlockContext): Block {
@@ -45,6 +74,9 @@ class AstBuilder : AppLangBaseVisitor<Any?>() {
     private fun visitStatementNode(ctx: AppLangParser.StatementContext): Stmt = when {
         ctx.varDecl() != null -> visitVarDeclNode(ctx.varDecl())
         ctx.assignment() != null -> visitAssignmentNode(ctx.assignment())
+        ctx.fieldAssignment() != null -> ctx.fieldAssignment().let {
+            FieldAssign(visitExprNode(it.receiver), it.IDENT().text, visitExprNode(it.value), it.IDENT().pos())
+        }
         ctx.ifStmt() != null -> visitIfStmtNode(ctx.ifStmt())
         ctx.whileStmt() != null -> visitWhileStmtNode(ctx.whileStmt())
         ctx.returnStmt() != null -> visitReturnStmtNode(ctx.returnStmt())
@@ -80,6 +112,14 @@ class AstBuilder : AppLangBaseVisitor<Any?>() {
         ExprStmt(visitExprNode(ctx.expr()), ctx.pos())
 
     private fun visitExprNode(ctx: AppLangParser.ExprContext): Expr = when (ctx) {
+        is AppLangParser.MethodCallContext -> MethodCall(
+            visitExprNode(ctx.receiver),
+            ctx.IDENT().text,
+            ctx.argList()?.expr().orEmpty().map { visitExprNode(it) },
+            ctx.IDENT().pos(),
+        )
+        is AppLangParser.FieldAccessContext -> FieldAccess(visitExprNode(ctx.receiver), ctx.IDENT().text, ctx.IDENT().pos())
+        is AppLangParser.ThisContext -> This(ctx.pos())
         is AppLangParser.MulDivModContext -> BinaryOp(
             binaryOperatorOf(ctx.op.text), visitExprNode(ctx.left), visitExprNode(ctx.right), ctx.pos(),
         )

@@ -81,7 +81,7 @@ class ParserTest {
 
         // Assert
         assertFalse(collector.hasErrors)
-        assertEquals(3, programCtx.functionDecl().size)
+        assertEquals(3, programCtx.topLevelDecl().mapNotNull { it.functionDecl() }.size)
     }
 
     @Test
@@ -92,7 +92,7 @@ class ParserTest {
 
         // Act
         val (programCtx, collector) = parse(source)
-        val returnExpr = programCtx.functionDecl(0).block().statement(0).returnStmt().expr()
+        val returnExpr = programCtx.topLevelDecl(0).functionDecl().block().statement(0).returnStmt().expr()
 
         // Assert
         assertFalse(collector.hasErrors)
@@ -102,5 +102,70 @@ class ParserTest {
             addSub.right is AppLangParser.MulDivModContext,
             "правый операнд '+' должен быть MulDivMod ('2 * 3'), т.к. '*' приоритетнее",
         )
+    }
+
+    @ParameterizedTest(name = "программа с классами синтаксически валидна: {0}")
+    @ValueSource(
+        strings = [
+            "class Empty {}",
+            "class Point { val x: Int; var y: Int = 0; constructor(x: Int) { this.x = x; } fun sum(): Int { return this.x + this.y; } }",
+            "class Node { var next: Node = Node(); } fun main() {}",
+            "fun main() { val p = Point(1); p.y = 2; println(p.sum()); }",
+            "fun main() { a.b.c = 1; a.b().c = 2; f().x = 3; }",
+        ],
+    )
+    @DisplayName("Классы, поля, конструкторы, методы и обращения к членам разбираются без ошибок")
+    fun `class declarations and member access parse`(source: String) {
+        // Act
+        val (_, collector) = parse(source)
+
+        // Assert
+        assertFalse(collector.hasErrors, "неожиданные синтаксические ошибки: ${collector.diagnostics}")
+    }
+
+    @ParameterizedTest(name = "некорректный класс: {0}")
+    @ValueSource(
+        strings = [
+            "class A { println(1); }", // произвольный оператор в теле класса
+            "class A { val x = 1; }", // тип поля обязателен
+            "fun main() { class B {} }", // класс только на верхнем уровне
+            "fun main() { a.b() = 1; }", // вызов не может быть целью записи
+            "fun main() { x = a.b = 1; }", // запись поля — только оператор
+        ],
+    )
+    @DisplayName("Запрещённые формы классов и записи полей — синтаксическая ошибка")
+    fun `forbidden class forms are syntax errors`(source: String) {
+        assertTrue(parse(source).second.hasErrors, "ожидалась синтаксическая ошибка: $source")
+    }
+
+    @Test
+    @DisplayName("Обращение к члену связывает сильнее унарного минуса и строит цепочки слева направо")
+    fun `member access binds tighter than unary minus and chains left to right`() {
+        // Arrange
+        val source = "fun main(): Int { return -a.b.c(); }"
+
+        // Act
+        val (programCtx, collector) = parse(source)
+        val returnExpr = programCtx.topLevelDecl(0).functionDecl().block().statement(0).returnStmt().expr()
+
+        // Assert: -( (a.b).c() )
+        assertFalse(collector.hasErrors)
+        val minus = returnExpr as AppLangParser.UnaryMinusContext
+        val call = minus.operand as AppLangParser.MethodCallContext
+        assertEquals("c", call.IDENT().text)
+        assertTrue(call.receiver is AppLangParser.FieldAccessContext)
+    }
+
+    @Test
+    @DisplayName("Запись поля по цепочке разбирается как запись последнего поля в результат цепочки")
+    fun `chained field assignment targets the last field`() {
+        // Act
+        val (programCtx, collector) = parse("fun main() { a.b.c = 1; }")
+        val assignment = programCtx.topLevelDecl(0).functionDecl().block().statement(0).fieldAssignment()
+
+        // Assert
+        assertFalse(collector.hasErrors)
+        assertEquals("c", assignment.IDENT().text)
+        assertEquals("a.b", assignment.receiver.text)
     }
 }

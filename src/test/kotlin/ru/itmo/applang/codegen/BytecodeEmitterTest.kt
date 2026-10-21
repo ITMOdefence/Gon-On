@@ -289,4 +289,164 @@ class BytecodeEmitterTest {
         // Assert
         assertEquals("main", module.functions[module.entryFunctionIndex].name)
     }
+
+    @Test
+    @DisplayName("Программа без классов компилируется в профиль 1.0, с классом — в 2.0")
+    fun `profile is chosen by the presence of classes`() {
+        // Act
+        val procedural = compile("fun main() {}")
+        val objects = compile("class A {} fun main() {}")
+
+        // Assert
+        assertEquals(1 to 0, procedural.versionMajor to procedural.versionMinor)
+        assertEquals(2 to 0, objects.versionMajor to objects.versionMinor)
+        assertEquals(listOf("A.init", "main"), objects.functions.map { it.name })
+    }
+
+    @Test
+    @DisplayName("Вызов метода: receiver первым и один раз во временный слот, аргументы справа налево, this последним")
+    fun `method call evaluates receiver first then arguments right to left`() {
+        // Arrange
+        val module = compile(
+            "class C { fun m(a: Int, b: Int): Int { return a - b; } } " +
+                "fun main(): Int { val c = C(); return c.m(10, 20); }",
+        )
+        val main = module.function("main")
+        val tempSlot = 1 // слот 0 — переменная c, временные слоты идут после именованных
+        val c = 0
+        fun constIndex(value: Int) = module.constants.indexOf(ru.itmo.applang.bytecode.ConstantValue.IntConst(value))
+
+        // Act
+        val callSequence = main.instructions.dropWhile { it != Instruction.LoadLocal(c) }
+
+        // Assert
+        assertEquals(
+            listOf(
+                Instruction.LoadLocal(c),
+                Instruction.StoreLocal(tempSlot),
+                Instruction.LoadConst(constIndex(20)),
+                Instruction.LoadConst(constIndex(10)),
+                Instruction.LoadLocal(tempSlot),
+                Instruction.Call(module.functions.indexOfFirst { it.name == "C.m" }),
+                Instruction.Return,
+            ),
+            callSequence,
+        )
+        assertEquals(3, module.function("C.m").paramCount, "this + 2 явных параметра")
+    }
+
+    @Test
+    @DisplayName("Создание: аргументы, ALLOC_OBJECT, сохранение ссылки, CALL инициализации, ссылка как результат")
+    fun `construction allocates then calls the initializer and yields the reference`() {
+        // Arrange
+        val module = compile("class P { var v: Int; constructor(v: Int) { this.v = v; } } fun main() { val p = P(5); }")
+        val init = module.functions.indexOfFirst { it.name == "P.init" }
+
+        // Act
+        val main = module.function("main").instructions
+
+        // Assert: слот 0 — переменная p, слот 1 — временный
+        assertEquals(
+            listOf(
+                Instruction.LoadConst(module.constants.indexOf(ru.itmo.applang.bytecode.ConstantValue.IntConst(5))),
+                Instruction.AllocObject(0),
+                Instruction.StoreLocal(1),
+                Instruction.LoadLocal(1),
+                Instruction.Call(init),
+                Instruction.LoadLocal(1),
+                Instruction.StoreLocal(0),
+                Instruction.ReturnVoid,
+            ),
+            main,
+        )
+        assertEquals(2, module.function("P.init").paramCount)
+        assertEquals(Instruction.ReturnVoid, module.function("P.init").instructions.last())
+    }
+
+    @Test
+    @DisplayName("Запись поля: receiver вычисляется раньше правой части, затем SET_FIELD")
+    fun `field write evaluates receiver before the value`() {
+        // Arrange
+        val module = compile("class P { var v: Int = 0; } fun main() { val p = P(); p.v = 7; }")
+
+        // Act
+        val tail = module.function("main").instructions.takeLast(4)
+
+        // Assert
+        assertEquals(
+            listOf(
+                Instruction.LoadLocal(0),
+                Instruction.LoadConst(module.constants.indexOf(ru.itmo.applang.bytecode.ConstantValue.IntConst(7))),
+                Instruction.SetField(0, 0),
+                Instruction.ReturnVoid,
+            ),
+            tail,
+        )
+    }
+
+    @Test
+    @DisplayName("Инициализаторы полей выполняются в порядке объявления до тела конструктора")
+    fun `field initializers run in declaration order before the constructor body`() {
+        // Arrange
+        val module = compile(
+            "class A { var first: Int = 1; var second: Int; var third: Int = 3; constructor() { this.second = 2; } } fun main() {}",
+        )
+
+        // Act
+        val writes = module.function("A.init").instructions.filterIsInstance<Instruction.SetField>().map { it.fieldIndex }
+
+        // Assert
+        assertEquals(listOf(0, 2, 1), writes)
+    }
+
+    @Test
+    @DisplayName("Вложенные вызовы методов используют разные временные слоты и не затирают receiver")
+    fun `nested method calls use distinct temporary slots`() {
+        // Arrange
+        val module = compile(
+            "class C { fun id(x: Int): Int { return x; } } " +
+                "fun main(): Int { val a = C(); val b = C(); return a.id(b.id(1)); }",
+        )
+
+        // Act
+        val main = module.function("main")
+        val stores = main.instructions.filterIsInstance<Instruction.StoreLocal>().map { it.slot }
+
+        // Assert: a=0, b=1; создания используют слот 2; a.id — слот 2, вложенный b.id — слот 3
+        assertEquals(listOf(2, 0, 2, 1, 2, 3), stores)
+        assertEquals(4, main.localCount)
+    }
+
+    @Test
+    @DisplayName("Неиспользованный объектный результат снимается POP, после Unit-метода POP нет")
+    fun `unused object result is popped but unit method result is not`() {
+        // Arrange
+        val module = compile("class A { fun touch() {} } fun main() { A(); A().touch(); }")
+
+        // Act
+        val main = module.function("main").instructions
+
+        // Assert
+        assertEquals(1, main.count { it == Instruction.Pop })
+        assertEquals(Instruction.ReturnVoid, main.last())
+        assertTrue(main[main.size - 2] is Instruction.Call)
+    }
+
+    @Test
+    @DisplayName("ClassTable: поля с типами, методы класса без функции инициализации")
+    fun `class table lists typed fields and methods without the initializer`() {
+        // Arrange
+        val module = compile(
+            "class Owner { var name: String = \"x\"; var pet: Pet = Pet(); fun hello() {} } class Pet { var age: Int = 1; } fun main() {}",
+        )
+
+        // Act
+        val owner = module.classes[0]
+
+        // Assert
+        assertEquals(listOf("name", "pet"), owner.fields.map { it.name })
+        assertEquals(ru.itmo.applang.bytecode.FieldType.StringType, owner.fields[0].type)
+        assertEquals(ru.itmo.applang.bytecode.FieldType.ObjectType(1), owner.fields[1].type)
+        assertEquals(listOf("Owner.hello"), owner.methodFunctionIndices.map { module.functions[it].name })
+    }
 }

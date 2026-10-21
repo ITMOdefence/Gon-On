@@ -308,6 +308,28 @@ class TypeCheckerTest {
     }
 
     @Test
+    @DisplayName("65535 функций помещаются в таблицу, 65536 — превышение предела function_count")
+    fun `function table limit is checked by count`() {
+        // Arrange: AST строится напрямую — парсить 65536 функций незачем
+        fun programWith(count: Int): ru.itmo.applang.ast.Program {
+            val position = ru.itmo.applang.diagnostics.SourcePosition(1, 1)
+            val functions = (0 until count - 1).map {
+                ru.itmo.applang.ast.FunctionDecl("f$it", emptyList(), ru.itmo.applang.ast.Type.UNIT, ru.itmo.applang.ast.Block(emptyList(), position), position)
+            }
+            val main = ru.itmo.applang.ast.FunctionDecl("main", emptyList(), ru.itmo.applang.ast.Type.UNIT, ru.itmo.applang.ast.Block(emptyList(), position), position)
+            return ru.itmo.applang.ast.Program(functions + main)
+        }
+
+        // Act
+        val atLimit = DiagnosticCollector().also { TypeChecker(it).check(programWith(65_535)) }
+        val overLimit = DiagnosticCollector().also { TypeChecker(it).check(programWith(65_536)) }
+
+        // Assert
+        assertFalse(atLimit.hasErrors, "${atLimit.diagnostics.take(3)}")
+        assertTrue(overLimit.diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
+    }
+
+    @Test
     @DisplayName("После успешной проверки каждое выражение получает не-null resolvedType")
     fun `every expression gets a resolved type after successful type checking`() {
         // Arrange

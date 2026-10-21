@@ -3,19 +3,36 @@ package ru.itmo.applang.ast
 import ru.itmo.applang.diagnostics.SourcePosition
 
 /**
- * AST языка AppLang v1 (процедурный базис).
+ * AST языка Gon&On: процедурный базис v1 и классы v2.
  *
- * Иерархия намеренно открыта для расширения будущими версиями языка: [Stmt] и [Expr] —
- * sealed-классы, новые подтипы (объявление класса, `new`-выражение, доступ к полю и т.п.)
- * добавляются в v2 без изменения уже существующих узлов.
+ * Иерархия открыта для расширения: [Stmt] и [Expr] — sealed-классы, новые конструкции
+ * добавляются новыми подтипами без изменения существующих узлов. Поля `resolved*` заполняет
+ * [ru.itmo.applang.semantic.TypeChecker]; codegen работает только с полностью разрешённым AST.
  */
 
-/** Типы значений AppLang v1. В v2 сюда добавятся пользовательские типы (классы). */
-enum class Type {
-    INT,
-    BOOL,
-    STRING,
-    UNIT, // тип функций без возвращаемого значения
+/** Типы значений Gon&On. */
+sealed class Type {
+    data object INT : Type() {
+        override fun toString() = "Int"
+    }
+
+    data object BOOL : Type() {
+        override fun toString() = "Bool"
+    }
+
+    data object STRING : Type() {
+        override fun toString() = "String"
+    }
+
+    /** Отсутствие результата у функции без возвращаемого значения. Не тип значения, переменной или поля. */
+    data object UNIT : Type() {
+        override fun toString() = "Unit"
+    }
+
+    /** Пользовательский класс; два класса с одинаковыми полями — разные типы (номинальная типизация). */
+    data class ClassType(val name: String) : Type() {
+        override fun toString() = name
+    }
 }
 
 data class Param(
@@ -24,20 +41,65 @@ data class Param(
     val position: SourcePosition,
 )
 
+/** Объявление верхнего уровня: функция или класс. */
+sealed interface TopLevelDecl {
+    val name: String
+    val position: SourcePosition
+}
+
+/** Функция верхнего уровня или метод класса (метод получает неявный `this` в слоте 0). */
 data class FunctionDecl(
-    val name: String,
+    override val name: String,
     val params: List<Param>,
     val returnType: Type,
     val body: Block,
-    val position: SourcePosition,
-) {
-    /** Общее число слотов локальных переменных (включая параметры), заполняется TypeChecker'ом. */
+    override val position: SourcePosition,
+) : TopLevelDecl {
+    /** Общее число слотов локальных переменных (включая `this`, параметры и скрытые временные слоты). */
     var resolvedLocalCount: Int = -1
+
+    /** Первый скрытый временный слот: временный слот глубины `d` — `resolvedTempBase + d`. */
+    var resolvedTempBase: Int = -1
 }
 
-data class Program(
-    val functions: List<FunctionDecl>,
+/** Поле класса; тип всегда объявлен явно. */
+data class FieldDecl(
+    val name: String,
+    val isMutable: Boolean, // true для var, false для val
+    val type: Type,
+    val initializer: Expr?,
+    val position: SourcePosition,
 )
+
+/** Пользовательский конструктор: тело функции инициализации после инициализаторов полей. */
+data class ConstructorDecl(
+    val params: List<Param>,
+    val body: Block,
+    val position: SourcePosition,
+)
+
+data class ClassDecl(
+    override val name: String,
+    val fields: List<FieldDecl>,
+    /** Объявленные конструкторы; языком допускается не более одного (проверяет TypeChecker). */
+    val constructors: List<ConstructorDecl>,
+    val methods: List<FunctionDecl>,
+    override val position: SourcePosition,
+) : TopLevelDecl {
+    val constructor: ConstructorDecl? get() = constructors.firstOrNull()
+
+    /** Слоты функции инициализации: `this`, параметры конструктора, локальные и временные. */
+    var resolvedInitLocalCount: Int = -1
+    var resolvedInitTempBase: Int = -1
+}
+
+/** Программа — объявления верхнего уровня в порядке исходника. */
+data class Program(
+    val declarations: List<TopLevelDecl>,
+) {
+    val functions: List<FunctionDecl> get() = declarations.filterIsInstance<FunctionDecl>()
+    val classes: List<ClassDecl> get() = declarations.filterIsInstance<ClassDecl>()
+}
 
 sealed class Stmt {
     abstract val position: SourcePosition
@@ -65,6 +127,17 @@ data class Assign(
     override val position: SourcePosition,
 ) : Stmt() {
     var resolvedSlot: Int = -1
+}
+
+/** Запись поля `receiver.field = value`; receiver вычисляется раньше правой части. */
+data class FieldAssign(
+    val receiver: Expr,
+    val fieldName: String,
+    val value: Expr,
+    override val position: SourcePosition,
+) : Stmt() {
+    var resolvedClassIndex: Int = -1
+    var resolvedFieldIndex: Int = -1
 }
 
 data class If(
@@ -130,8 +203,44 @@ data class UnaryOp(
     override val position: SourcePosition,
 ) : Expr()
 
+/**
+ * Вызов по имени: функция верхнего уровня, встроенная `print`/`println` или создание экземпляра
+ * класса `Name(args)` (LANG-02) — что именно, решает TypeChecker.
+ */
 data class Call(
     val functionName: String,
     val args: List<Expr>,
     override val position: SourcePosition,
-) : Expr()
+) : Expr() {
+    /** Класс, если вызов — создание экземпляра. */
+    var resolvedConstructorClass: ClassDecl? = null
+
+    /** Глубина скрытого слота для ссылки на создаваемый экземпляр. */
+    var resolvedTempDepth: Int = -1
+}
+
+/** Текущий экземпляр внутри метода или конструктора; слот 0. */
+data class This(override val position: SourcePosition) : Expr()
+
+/** Чтение поля `receiver.field`. */
+data class FieldAccess(
+    val receiver: Expr,
+    val fieldName: String,
+    override val position: SourcePosition,
+) : Expr() {
+    var resolvedClassIndex: Int = -1
+    var resolvedFieldIndex: Int = -1
+}
+
+/** Вызов метода `receiver.method(args)`; receiver вычисляется первым и ровно один раз. */
+data class MethodCall(
+    val receiver: Expr,
+    val methodName: String,
+    val args: List<Expr>,
+    override val position: SourcePosition,
+) : Expr() {
+    var resolvedMethod: FunctionDecl? = null
+
+    /** Глубина скрытого слота, в котором receiver ждёт вычисления аргументов. */
+    var resolvedTempDepth: Int = -1
+}

@@ -46,6 +46,9 @@ class LexerTest {
             Arguments.of("return", "RETURN"),
             Arguments.of("true", "TRUE"),
             Arguments.of("false", "FALSE"),
+            Arguments.of("class", "CLASS"),
+            Arguments.of("constructor", "CONSTRUCTOR"),
+            Arguments.of("this", "THIS"),
         )
     }
 
