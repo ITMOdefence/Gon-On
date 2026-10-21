@@ -2,6 +2,7 @@ package ru.itmo.applang.semantic
 
 import org.antlr.v4.runtime.CharStreams
 import org.antlr.v4.runtime.CommonTokenStream
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -181,6 +182,82 @@ class TypeCheckerTest {
             collector.diagnostics.any { it.code == SemanticErrorCodes.NO_VALUE },
             "ожидался код '${SemanticErrorCodes.NO_VALUE}', получены: ${collector.diagnostics}",
         )
+    }
+
+    @Test
+    @DisplayName("Строковый литерал с настоящим символом NUL отклоняется с позицией литерала")
+    fun `string literal containing a real nul character is rejected`() {
+        // Arrange: в исходнике сам символ U+0000, а не его запись "\\0"
+        val source = "fun main() { println(\"a\u0000b\"); }"
+
+        // Act
+        val collector = typeCheck(source)
+
+        // Assert
+        val diagnostic = collector.diagnostics.single { it.code == SemanticErrorCodes.INVALID_STRING_CONSTANT }
+        assertEquals(1, diagnostic.position?.line)
+    }
+
+    @Test
+    @DisplayName("Длина литерала проверяется в байтах после раскрытия escape-последовательностей")
+    fun `string literal length is checked after unescaping`() {
+        // Arrange: "\n" в исходнике — 2 символа, в константе — 1 байт
+        val limit = ru.itmo.applang.bytecode.FormatLimits.MAX_STRING_BYTES
+        val atLimit = "\\n".repeat(limit)
+        val overLimit = "a".repeat(limit + 1)
+
+        // Act
+        val ok = typeCheck("fun main() { println(\"$atLimit\"); }")
+        val tooLong = typeCheck("fun main() { println(\"$overLimit\"); }")
+
+        // Assert
+        assertFalse(ok.hasErrors, "неожиданные диагностики: ${ok.diagnostics}")
+        assertTrue(tooLong.diagnostics.any { it.code == SemanticErrorCodes.INVALID_STRING_CONSTANT })
+    }
+
+    @Test
+    @DisplayName("255 локальных слотов допустимы, 256 — превышение предела local_count")
+    fun `255 local slots are allowed and 256 exceed the limit`() {
+        // Arrange
+        fun program(slots: Int) = "fun main() { " + (0 until slots).joinToString(" ") { "val v$it: Int = $it;" } + " }"
+
+        // Act
+        val ok = typeCheck(program(255))
+        val tooMany = typeCheck(program(256))
+
+        // Assert
+        assertFalse(ok.hasErrors, "неожиданные диагностики: ${ok.diagnostics}")
+        assertTrue(tooMany.diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
+    }
+
+    @Test
+    @DisplayName("Слоты считаются за всю функцию: переменные соседних блоков не переиспользуют слоты")
+    fun `slots of sibling blocks are counted in total`() {
+        // Arrange: одновременно видно не больше 128 переменных, но всего выделяется 256 слотов
+        val half = (0 until 128).joinToString(" ") { "val a$it: Int = $it;" }
+        val otherHalf = (0 until 128).joinToString(" ") { "val b$it: Int = $it;" }
+        val source = "fun main() { { $half } { $otherHalf } }"
+
+        // Act
+        val collector = typeCheck(source)
+
+        // Assert
+        assertTrue(collector.diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
+    }
+
+    @Test
+    @DisplayName("255 параметров допустимы, но ещё одна локальная переменная превышает local_count")
+    fun `255 parameters are allowed but one more local exceeds the limit`() {
+        // Arrange
+        val params = (0 until 255).joinToString(", ") { "p$it: Int" }
+        val okSource = "fun wide($params) {} fun main() {}"
+        val tooManySource = "fun wide($params) { val extra: Int = 1; } fun main() {}"
+        val tooManyParams = "fun wide($params, last: Int) {} fun main() {}"
+
+        // Act & Assert
+        assertFalse(typeCheck(okSource).hasErrors)
+        assertTrue(typeCheck(tooManySource).diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
+        assertTrue(typeCheck(tooManyParams).diagnostics.any { it.code == SemanticErrorCodes.LIMIT_EXCEEDED })
     }
 
     @Test

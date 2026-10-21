@@ -19,7 +19,8 @@ data class FunctionEntry(
     val localCount: Int,
     val instructions: List<Instruction>,
 ) {
-    val codeByteSize: Int get() = instructions.sumOf { it.byteSize }
+    /** Длина кода функции в байтах; Long, чтобы сумма не переполнялась до проверки пределов. */
+    val codeByteSize: Long get() = instructions.sumOf { it.byteSize.toLong() }
 }
 
 /** In-memory модель всей единицы компиляции — вход для [BytecodeWriter] и [Disassembler]. */

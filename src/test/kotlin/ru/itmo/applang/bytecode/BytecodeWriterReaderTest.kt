@@ -103,4 +103,20 @@ class BytecodeWriterReaderTest {
             BytecodeReader.readFromBytes(bytes)
         }
     }
+
+    @Test
+    @DisplayName("Значение, не помещающееся в поле u8/u16, отклоняется writer'ом, а не усекается")
+    fun `writer rejects values that do not fit their field instead of truncating`() {
+        // Arrange
+        val module = sampleModule()
+        val main = module.functions.single()
+        val tooManyLocals = module.copy(functions = listOf(main.copy(localCount = 256)))
+        val tooBigConstIndex = module.copy(
+            functions = listOf(main.copy(instructions = listOf(Instruction.LoadConst(70_000), Instruction.ReturnVoid))),
+        )
+
+        // Act & Assert
+        assertThrows(BytecodeFormatException::class.java) { BytecodeWriter.writeToBytes(tooManyLocals) }
+        assertThrows(BytecodeFormatException::class.java) { BytecodeWriter.writeToBytes(tooBigConstIndex) }
+    }
 }

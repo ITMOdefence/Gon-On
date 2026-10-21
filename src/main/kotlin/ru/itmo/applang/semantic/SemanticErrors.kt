@@ -20,4 +20,10 @@ object SemanticErrorCodes {
 
     /** Вызов функции без результата использован там, где нужно значение (BASE-02). */
     const val NO_VALUE = "NO_VALUE"
+
+    /** Строковый литерал нарушает контракт libstr: NUL, некорректный UTF-8 или длина > 1 МиБ (BASE-03). */
+    const val INVALID_STRING_CONSTANT = "INVALID_STRING_CONSTANT"
+
+    /** Превышен предел формата `.albc` или реализации компилятора: слоты, параметры, таблицы (BASE-04). */
+    const val LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
 }

@@ -22,10 +22,18 @@ import ru.itmo.applang.ast.VarDecl
 import ru.itmo.applang.ast.VarRef
 import ru.itmo.applang.ast.While
 import ru.itmo.applang.bytecode.BytecodeModule
+import ru.itmo.applang.bytecode.FormatLimits
 import ru.itmo.applang.bytecode.FunctionEntry
 import ru.itmo.applang.bytecode.Instruction
 
 private val BUILTIN_NAMES = setOf("print", "println")
+
+/**
+ * Программа корректна по типам, но не помещается в формат `.albc`: например, пул констант после
+ * дедупликации больше 65535 записей. Это ошибка компиляции с диагностикой LIMIT_EXCEEDED, а не
+ * внутренняя ошибка генератора.
+ */
+class CodegenLimitException(message: String) : Exception(message)
 
 /**
  * Транслирует типизированный AST (после успешного [ru.itmo.applang.semantic.TypeChecker]) в
@@ -53,10 +61,19 @@ class BytecodeEmitter {
             emitFunction(function, functionIndexByName)
         }
 
+        // Предел проверяется по фактическому пулу после дедупликации, включая имена функций.
+        val constants = constantPool.build()
+        if (constants.size > FormatLimits.MAX_TABLE_ENTRIES) {
+            throw CodegenLimitException(
+                "пул констант после дедупликации содержит ${constants.size} записей " +
+                    "(включая имена функций), максимум ${FormatLimits.MAX_TABLE_ENTRIES} (constant_count: u16)",
+            )
+        }
+
         return BytecodeModule(
             versionMajor = BytecodeModule.CURRENT_VERSION_MAJOR,
             versionMinor = BytecodeModule.CURRENT_VERSION_MINOR,
-            constants = constantPool.build(),
+            constants = constants,
             functions = functions,
             entryFunctionIndex = entryIndex,
         )

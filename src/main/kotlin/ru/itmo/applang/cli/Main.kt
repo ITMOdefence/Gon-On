@@ -6,10 +6,12 @@ import ru.itmo.applang.ast.AstBuilder
 import ru.itmo.applang.bytecode.BytecodeWriter
 import ru.itmo.applang.bytecode.Disassembler
 import ru.itmo.applang.codegen.BytecodeEmitter
+import ru.itmo.applang.codegen.CodegenLimitException
 import ru.itmo.applang.diagnostics.DiagnosticCollector
 import ru.itmo.applang.diagnostics.SyntaxErrorListener
 import ru.itmo.applang.parser.AppLangLexer
 import ru.itmo.applang.parser.AppLangParser
+import ru.itmo.applang.semantic.SemanticErrorCodes
 import ru.itmo.applang.semantic.TypeChecker
 import java.nio.file.Files
 import java.nio.file.Path
@@ -110,7 +112,12 @@ fun main(args: Array<String>) {
     // Диагностики-предупреждения (если появятся в будущих версиях) всё равно стоит показать.
     collector.diagnostics.forEach { println(it) }
 
-    val module = BytecodeEmitter().emit(program)
+    val module = try {
+        BytecodeEmitter().emit(program)
+    } catch (e: CodegenLimitException) {
+        collector.error(SemanticErrorCodes.LIMIT_EXCEEDED, e.message ?: "превышен предел формата", null)
+        reportAndExit(collector, cli.inputFile)
+    }
     BytecodeWriter.writeToFile(module, cli.outputFile)
     println("Скомпилировано: ${cli.inputFile} -> ${cli.outputFile}")
 

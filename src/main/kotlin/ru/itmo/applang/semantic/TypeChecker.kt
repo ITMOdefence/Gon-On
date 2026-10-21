@@ -21,6 +21,8 @@ import ru.itmo.applang.ast.UnaryOperator
 import ru.itmo.applang.ast.VarDecl
 import ru.itmo.applang.ast.VarRef
 import ru.itmo.applang.ast.While
+import ru.itmo.applang.bytecode.FormatLimits
+import ru.itmo.applang.bytecode.StringConstraints
 import ru.itmo.applang.diagnostics.DiagnosticCollector
 import ru.itmo.applang.diagnostics.SourcePosition
 
@@ -54,7 +56,23 @@ class TypeChecker(private val collector: DiagnosticCollector) {
     }
 
     private fun collectFunctionSignatures(program: Program) {
+        if (program.functions.size > FormatLimits.MAX_TABLE_ENTRIES) {
+            collector.error(
+                SemanticErrorCodes.LIMIT_EXCEEDED,
+                "в программе ${program.functions.size} функций, таблица функций вмещает не более " +
+                    "${FormatLimits.MAX_TABLE_ENTRIES}",
+                program.functions[FormatLimits.MAX_TABLE_ENTRIES].position,
+            )
+        }
         for (function in program.functions) {
+            if (function.params.size > FormatLimits.MAX_PARAMETERS) {
+                collector.error(
+                    SemanticErrorCodes.LIMIT_EXCEEDED,
+                    "функция '${function.name}' объявляет ${function.params.size} параметров, " +
+                        "максимум ${FormatLimits.MAX_PARAMETERS} (param_count: u8)",
+                    function.position,
+                )
+            }
             val signature = FunctionSignature(function.name, function.params.map { it.type }, function.returnType)
             val declared = functionTable.declare(signature)
             if (!declared) {
@@ -76,6 +94,16 @@ class TypeChecker(private val collector: DiagnosticCollector) {
         checkBlock(function.body, scope, function.returnType)
         scope.exitScope()
         function.resolvedLocalCount = scope.totalSlotsUsed()
+        // Слоты не переиспользуются после выхода из блока, поэтому с пределом сравнивается общее
+        // число выделенных слотов, а не максимум одновременно видимых переменных (BASE-04).
+        if (function.resolvedLocalCount > FormatLimits.MAX_LOCAL_SLOTS) {
+            collector.error(
+                SemanticErrorCodes.LIMIT_EXCEEDED,
+                "функция '${function.name}' использует ${function.resolvedLocalCount} локальных слотов " +
+                    "(включая параметры), максимум ${FormatLimits.MAX_LOCAL_SLOTS} (local_count: u8)",
+                function.position,
+            )
+        }
 
         if (function.returnType != Type.UNIT && !blockAlwaysReturns(function.body)) {
             collector.error(
@@ -251,7 +279,16 @@ class TypeChecker(private val collector: DiagnosticCollector) {
     private fun inferExpr(expr: Expr, scope: LocalScope): Type? = when (expr) {
         is IntLiteral -> Type.INT
         is BoolLiteral -> Type.BOOL
-        is StringLiteral -> Type.STRING
+        is StringLiteral -> {
+            StringConstraints.violation(expr.value)?.let { reason ->
+                collector.error(
+                    SemanticErrorCodes.INVALID_STRING_CONSTANT,
+                    "строковый литерал не может быть константой GVM: $reason",
+                    expr.position,
+                )
+            }
+            Type.STRING
+        }
         is VarRef -> {
             val variable = scope.resolve(expr.name)
             if (variable == null) {

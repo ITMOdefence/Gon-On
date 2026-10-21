@@ -4,6 +4,7 @@ import org.antlr.v4.runtime.CharStreams
 import org.antlr.v4.runtime.CommonTokenStream
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -253,5 +254,22 @@ class BytecodeEmitterTest {
 
         // Assert
         assertEquals(Instruction.ReturnVoid, instructions.last())
+    }
+
+    @Test
+    @DisplayName("Пул констант больше 65535 записей после дедупликации — ошибка предела, а не усечение")
+    fun `constant pool larger than u16 is rejected`() {
+        // Arrange: 65535 разных Int-литералов + имя main = 65536 записей
+        val body = (0 until 65_535).joinToString(" ") { "println($it);" }
+        val source = "fun main() { $body println(0); println(1); }"
+        val lexer = AppLangLexer(CharStreams.fromString(source))
+        val program = AstBuilder().buildProgram(AppLangParser(CommonTokenStream(lexer)).program())
+        val collector = DiagnosticCollector()
+        TypeChecker(collector).check(program)
+        assertFalse(collector.hasErrors)
+
+        // Act & Assert
+        val error = assertThrows(CodegenLimitException::class.java) { BytecodeEmitter().emit(program) }
+        assertTrue(error.message!!.contains("65536"))
     }
 }
