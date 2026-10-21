@@ -2,13 +2,20 @@ package ru.itmo.applang.bytecode
 
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 
 /**
  * Сериализует [BytecodeModule] в бинарный формат `.albc`, описанный в docs/BYTECODE_SPEC.md.
  * Формат — big-endian (сетевой порядок байт), что совпадает с поведением [DataOutputStream]
  * "из коробки", поэтому явного byte-swap здесь нет.
+ *
+ * Публичные методы не выдают заведомо невалидный результат (BASE-06): модуль проверяется
+ * [BytecodeVerifier] до сериализации, а готовые байты — строгим [BytecodeReader], который
+ * обязан прочитать ровно тот же модуль. Так проверяется реальная раскладка файла, а не только
+ * модель в памяти. При любой ошибке бросается [BytecodeFormatException] и файл не создаётся.
  */
 object BytecodeWriter {
     const val MAGIC = "ALBC"
@@ -18,6 +25,44 @@ object BytecodeWriter {
     private const val TAG_STRING = 3
 
     fun writeToBytes(module: BytecodeModule): ByteArray {
+        BytecodeVerifier.verify(module)
+        val bytes = serialize(module)
+        val reread = BytecodeReader.readFromBytes(bytes)
+        if (reread != module) {
+            throw BytecodeFormatException(
+                BytecodeIssue.LAYOUT,
+                "записанные байты читаются как другой модуль: сериализация несимметрична чтению",
+            )
+        }
+        return bytes
+    }
+
+    /**
+     * Запись в файл только после полной проверки и атомарно: байты пишутся во временный файл
+     * рядом с целевым и переносятся на его место. Существующий файл не перезаписывается
+     * невалидными или частично записанными данными.
+     */
+    fun writeToFile(module: BytecodeModule, path: Path) {
+        val bytes = writeToBytes(module)
+        val directory = path.toAbsolutePath().parent
+        val temporary = Files.createTempFile(directory, ".${path.fileName}.", ".tmp")
+        try {
+            Files.write(temporary, bytes)
+            try {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (e: AtomicMoveNotSupportedException) {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+
+    /**
+     * Сериализация без проверок. Только для тестов и генерации заведомо неверных файлов набора
+     * совместимости: результат может нарушать контракт GVM.
+     */
+    internal fun serialize(module: BytecodeModule): ByteArray {
         val buffer = ByteArrayOutputStream()
         DataOutputStream(buffer).use { out ->
             writeHeader(out, module)
@@ -26,10 +71,6 @@ object BytecodeWriter {
             writeCodeSection(out, module.functions)
         }
         return buffer.toByteArray()
-    }
-
-    fun writeToFile(module: BytecodeModule, path: Path) {
-        Files.write(path, writeToBytes(module))
     }
 
     private fun checkedCodeSize(size: Long): Long {

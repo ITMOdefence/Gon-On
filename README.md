@@ -30,16 +30,19 @@ flowchart TD
     F --> G["Типизированный AST&#10;resolvedType / resolvedSlot заполнены"]
     G --> H["BytecodeEmitter&#10;codegen/BytecodeEmitter.kt&#10;+ codegen/Labels.kt, ConstantPoolBuilder.kt"]
     H --> I["BytecodeModule&#10;bytecode/BytecodeModule.kt"]
-    I --> J["BytecodeWriter&#10;bytecode/BytecodeWriter.kt"]
+    I --> V["BytecodeVerifier + строгий BytecodeReader&#10;проверка по правилам GVM до записи"]
+    V --> J["BytecodeWriter&#10;bytecode/BytecodeWriter.kt"]
     J --> K["Бинарный файл байткода .albc"]
     I --> L["Disassembler&#10;bytecode/Disassembler.kt"]
     L --> M["Текстовый дамп .albc.asm"]
 ```
 
-Если на любом из шагов "AstBuilder → TypeChecker" находится ошибка
-(синтаксическая или семантическая), пайплайн останавливается и CLI
-(`cli/Main.kt`) печатает диагностики вместо генерации байткода — до
-`BytecodeEmitter` дело не доходит. Подробнее про каждый шаг — в
+Все стадии собраны в `compiler/Compiler.kt`, которым пользуются и CLI, и
+тесты. Если на любой стадии находится ошибка — синтаксическая,
+семантическая, превышение пределов формата или нарушение правил
+верификатора GVM в сгенерированном байткоде, — пайплайн останавливается, CLI
+(`cli/Main.kt`) печатает диагностики, а выходной файл не создаётся и не
+перезаписывается. Подробнее про каждый шаг — в
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), про сам формат `.albc` —
 в [`docs/BYTECODE_SPEC.md`](docs/BYTECODE_SPEC.md).
 
@@ -73,8 +76,12 @@ flowchart TD
 | Флаг | Назначение |
 |---|---|
 | `-o <path>` | путь к выходному файлу байткода (по умолчанию `<file>.albc`) |
-| `--disasm` | вывести дизассемблированный байткод на stdout |
+| `--disasm` | вывести дизассемблированный байткод (модель в памяти, совпадающая с записанным файлом) на stdout |
 | `--dump-ast` | вывести AST на stdout (для отладки) |
+
+Коды завершения: `0` — файл записан; `1` — ошибка компиляции, чтения или
+записи (диагностики в stderr, выходной файл не тронут); `2` — неверные
+аргументы. Исходник читается как UTF-8.
 
 ## Структура репозитория
 
@@ -98,6 +105,11 @@ docs/              спецификации языка и байткода, ар
 
 ## Тестирование
 
+```bash
+./gradlew test --tests 'ru.itmo.applang.semantic.TypeCheckerTest'   # один класс
+./gradlew test --tests '*TypeCheckerTest.*main*'                     # по шаблону имени
+```
+
 Тесты организованы по слоям компилятора (JUnit5, параметризованные наборы
 для однотипных кейсов, `@DisplayName` на русском):
 
@@ -106,14 +118,20 @@ docs/              спецификации языка и байткода, ар
 - `ast/AstBuilderTest` — построение AST;
 - `semantic/TypeCheckerTest` — резолв имён и проверка типов (позитив и
   параметризованный негатив: undefined var/function, type mismatch,
-  val reassignment, arity mismatch и т.д.);
+  val reassignment, arity mismatch, Unit как значение, строки libstr,
+  точка входа `main`, пределы слотов и параметров);
 - `codegen/BytecodeEmitterTest` — генерация байткода для представительных
   конструкций (арифметика, if/else, while, вызов функции, short-circuit
-  `&&`/`||`, конкатенация строк);
-- `bytecode/BytecodeWriterReaderTest` — round-trip сериализации формата
-  `.albc`;
-- `e2e/EndToEndExamplesTest` — сквозная компиляция `examples/*.al` со
-  сверкой дизассемблированного вывода с golden-файлами.
+  `&&`/`||`, конкатенация строк) и корректность всех целей переходов;
+- `bytecode/BytecodeVerifierTest` — правила верификатора GVM: underflow,
+  слияния, циклы, возвраты, falloff, индексы, рекурсия;
+- `bytecode/BytecodeWriterReaderTest` — round-trip, независимая сверка
+  байтов раскладки, строгий reader на испорченных и обрезанных файлах,
+  отказ writer'а от невалидного модуля;
+- `bytecode/StringConstraintsTest` — контракт строк libstr;
+- `cli/CliTest` — коды завершения и сохранность выходного файла при ошибках;
+- `e2e/EndToEndExamplesTest` — сквозная компиляция `examples/*.al` через CLI в
+  реальный файл, чтение строгим reader'ом и сверка с golden-файлами.
 
 ## CI/CD
 

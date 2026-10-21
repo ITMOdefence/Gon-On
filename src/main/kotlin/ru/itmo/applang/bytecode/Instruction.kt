@@ -6,58 +6,47 @@ package ru.itmo.applang.bytecode
  * (ожидаемая последовательность инструкций читается как обычный список объектов Kotlin).
  *
  * `byteSize` — точный размер инструкции в закодированном виде (1 байт опкода + операнды),
- * используется при разрешении меток переходов в byte-offset'ы (см. codegen/Labels.kt).
+ * используется при разрешении меток переходов в byte-offset'ы (см. codegen/Labels.kt). Берётся из
+ * [Opcode.byteSize] — единого источника длин для writer, reader, меток и верификатора.
  */
 sealed class Instruction(val opcode: Opcode) {
-    abstract val byteSize: Int
+    val byteSize: Int get() = opcode.byteSize
 
-    data class LoadConst(val constIndex: Int) : Instruction(Opcode.LOAD_CONST) {
-        override val byteSize = 3 // opcode(1) + idx:u16(2)
-    }
+    data class LoadConst(val constIndex: Int) : Instruction(Opcode.LOAD_CONST)
 
-    data class LoadLocal(val slot: Int) : Instruction(Opcode.LOAD_LOCAL) {
-        override val byteSize = 2 // opcode(1) + slot:u8(1)
-    }
+    data class LoadLocal(val slot: Int) : Instruction(Opcode.LOAD_LOCAL)
 
-    data class StoreLocal(val slot: Int) : Instruction(Opcode.STORE_LOCAL) {
-        override val byteSize = 2
-    }
+    data class StoreLocal(val slot: Int) : Instruction(Opcode.STORE_LOCAL)
 
-    data object Add : Instruction(Opcode.ADD) { override val byteSize = 1 }
-    data object Sub : Instruction(Opcode.SUB) { override val byteSize = 1 }
-    data object Mul : Instruction(Opcode.MUL) { override val byteSize = 1 }
-    data object Div : Instruction(Opcode.DIV) { override val byteSize = 1 }
-    data object Mod : Instruction(Opcode.MOD) { override val byteSize = 1 }
-    data object Neg : Instruction(Opcode.NEG) { override val byteSize = 1 }
-    data object Concat : Instruction(Opcode.CONCAT) { override val byteSize = 1 }
+    data object Add : Instruction(Opcode.ADD)
+    data object Sub : Instruction(Opcode.SUB)
+    data object Mul : Instruction(Opcode.MUL)
+    data object Div : Instruction(Opcode.DIV)
+    data object Mod : Instruction(Opcode.MOD)
+    data object Neg : Instruction(Opcode.NEG)
+    data object Concat : Instruction(Opcode.CONCAT)
 
-    data object CmpEq : Instruction(Opcode.CMP_EQ) { override val byteSize = 1 }
-    data object CmpNe : Instruction(Opcode.CMP_NE) { override val byteSize = 1 }
-    data object CmpLt : Instruction(Opcode.CMP_LT) { override val byteSize = 1 }
-    data object CmpGt : Instruction(Opcode.CMP_GT) { override val byteSize = 1 }
-    data object CmpLe : Instruction(Opcode.CMP_LE) { override val byteSize = 1 }
-    data object CmpGe : Instruction(Opcode.CMP_GE) { override val byteSize = 1 }
+    data object CmpEq : Instruction(Opcode.CMP_EQ)
+    data object CmpNe : Instruction(Opcode.CMP_NE)
+    data object CmpLt : Instruction(Opcode.CMP_LT)
+    data object CmpGt : Instruction(Opcode.CMP_GT)
+    data object CmpLe : Instruction(Opcode.CMP_LE)
+    data object CmpGe : Instruction(Opcode.CMP_GE)
 
-    data object Not : Instruction(Opcode.NOT) { override val byteSize = 1 }
+    data object Not : Instruction(Opcode.NOT)
 
     /** [target] — абсолютный byte-offset внутри code-секции функции (не индекс инструкции). */
-    data class Jump(val target: Int) : Instruction(Opcode.JUMP) {
-        override val byteSize = 5 // opcode(1) + addr:u32(4)
-    }
+    data class Jump(val target: Int) : Instruction(Opcode.JUMP)
 
-    data class JumpIfFalse(val target: Int) : Instruction(Opcode.JUMP_IF_FALSE) {
-        override val byteSize = 5
-    }
+    data class JumpIfFalse(val target: Int) : Instruction(Opcode.JUMP_IF_FALSE)
 
-    data class Call(val functionIndex: Int) : Instruction(Opcode.CALL) {
-        override val byteSize = 3 // opcode(1) + func_idx:u16(2)
-    }
+    data class Call(val functionIndex: Int) : Instruction(Opcode.CALL)
 
-    data object Return : Instruction(Opcode.RETURN) { override val byteSize = 1 }
-    data object ReturnVoid : Instruction(Opcode.RETURN_VOID) { override val byteSize = 1 }
+    data object Return : Instruction(Opcode.RETURN)
+    data object ReturnVoid : Instruction(Opcode.RETURN_VOID)
 
-    data object Print : Instruction(Opcode.PRINT) { override val byteSize = 1 }
-    data object Println : Instruction(Opcode.PRINTLN) { override val byteSize = 1 }
+    data object Print : Instruction(Opcode.PRINT)
+    data object Println : Instruction(Opcode.PRINTLN)
 
-    data object Pop : Instruction(Opcode.POP) { override val byteSize = 1 }
+    data object Pop : Instruction(Opcode.POP)
 }

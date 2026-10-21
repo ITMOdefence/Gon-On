@@ -9,10 +9,10 @@ package ru.itmo.applang.bytecode
  * с 0x40, не переиспользуя и не меняя семантику существующих кодов v1 (чтобы старый байткод
  * оставался читаемым будущей ВМ без версионных веток внутри интерпретатора базовых операций).
  */
-enum class Opcode(val code: Int) {
-    LOAD_CONST(0x01),
-    LOAD_LOCAL(0x02),
-    STORE_LOCAL(0x03),
+enum class Opcode(val code: Int, val operandBytes: Int = 0) {
+    LOAD_CONST(0x01, operandBytes = 2),
+    LOAD_LOCAL(0x02, operandBytes = 1),
+    STORE_LOCAL(0x03, operandBytes = 1),
 
     ADD(0x04),
     SUB(0x05),
@@ -31,10 +31,10 @@ enum class Opcode(val code: Int) {
 
     NOT(0x11),
 
-    JUMP(0x12),
-    JUMP_IF_FALSE(0x13),
+    JUMP(0x12, operandBytes = 4),
+    JUMP_IF_FALSE(0x13, operandBytes = 4),
 
-    CALL(0x14),
+    CALL(0x14, operandBytes = 2),
     RETURN(0x15),
     RETURN_VOID(0x16),
 
@@ -44,9 +44,13 @@ enum class Opcode(val code: Int) {
     POP(0x19),
     ;
 
+    /** Полная длина закодированной инструкции: байт опкода и операнды фиксированной ширины. */
+    val byteSize: Int get() = 1 + operandBytes
+
     companion object {
         private val byCode = entries.associateBy { it.code }
-        fun fromCode(code: Int): Opcode =
-            byCode[code] ?: throw IllegalArgumentException("Неизвестный опкод: 0x${code.toString(16)}")
+
+        /** Опкод по его байту или null для неназначенного кода — неизвестный опкод не трактуется как noop. */
+        fun fromCodeOrNull(code: Int): Opcode? = byCode[code]
     }
 }

@@ -1,124 +1,182 @@
 package ru.itmo.applang.bytecode
 
-import java.io.ByteArrayInputStream
-import java.io.DataInputStream
-import java.io.EOFException
 import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Разбирает бинарный `.albc` обратно в [BytecodeModule]. Не используется рантаймом (рантайм —
- * это будущая ВМ на C/C++), но служит reference-реализацией формата: round-trip тесты
- * (write -> read -> сравнить) и [Disassembler] на уже сериализованном файле используют именно её.
+ * Строгий reference-reader `.albc`: разбирает файл обратно в [BytecodeModule] по тому же профилю,
+ * что и загрузчик GVM (docs/backlog/base.md, BASE-07). Рантаймом компилятора не используется, но
+ * служит независимой проверкой реально записанных байтов: [BytecodeWriter] прогоняет через него
+ * каждый результат, а тесты — выходные файлы.
+ *
+ * Ничего не угадывает и не прощает: точная сигнатура, поддерживаемые major и minor, нулевые flags,
+ * Bool только 0 / 1, строки по контракту libstr, непрерывные смещения функций, точный конец файла
+ * после секции кода. Размеры из файла проверяются по оставшимся байтам и пределам до выделения
+ * памяти; u32 трактуются как беззнаковые. Любое нарушение — [BytecodeFormatException].
  */
 object BytecodeReader {
     private const val TAG_INT = 1
     private const val TAG_BOOL = 2
     private const val TAG_STRING = 3
 
-    class MalformedBytecodeException(message: String) : Exception(message)
-
     fun readFromFile(path: Path): BytecodeModule = readFromBytes(Files.readAllBytes(path))
 
+    /** Читает файл и проверяет его полностью, включая [BytecodeVerifier]. */
     fun readFromBytes(bytes: ByteArray): BytecodeModule {
-        val input = DataInputStream(ByteArrayInputStream(bytes))
-        try {
-            val (versionMajor, versionMinor, entryFunctionIndex) = readHeader(input)
-            val constants = readConstants(input)
-            val functionHeaders = readFunctionTable(input)
-            val codeSize = input.readInt()
-            val codeBytes = ByteArray(codeSize)
-            input.readFully(codeBytes)
-
-            val functions = functionHeaders.map { header ->
-                val instructions = decodeInstructions(codeBytes, header.codeOffset, header.codeLength)
-                FunctionEntry(
-                    name = (constants[header.nameConstIndex] as ConstantValue.StringConst).value,
-                    nameConstIndex = header.nameConstIndex,
-                    paramCount = header.paramCount,
-                    localCount = header.localCount,
-                    instructions = instructions,
-                )
-            }
-
-            return BytecodeModule(versionMajor, versionMinor, constants, functions, entryFunctionIndex)
-        } catch (e: EOFException) {
-            throw MalformedBytecodeException("неожиданный конец файла: ${e.message}")
-        }
+        val module = readUnverified(bytes)
+        BytecodeVerifier.verify(module)
+        return module
     }
 
-    private data class Header(val versionMajor: Int, val versionMinor: Int, val entryFunctionIndex: Int)
+    /**
+     * Только безопасное декодирование и проверка раскладки, без анализа инструкций и стека.
+     * Нужно тестам round-trip сериализации отдельных опкодов вне корректной программы.
+     */
+    internal fun readUnverified(bytes: ByteArray): BytecodeModule {
+        val input = Cursor(bytes)
 
-    private fun readHeader(input: DataInputStream): Header {
-        val magicBytes = ByteArray(4)
-        input.readFully(magicBytes)
-        val magic = String(magicBytes, Charsets.US_ASCII)
-        if (magic != BytecodeWriter.MAGIC) {
-            throw MalformedBytecodeException("неверная сигнатура файла: '$magic', ожидалось '${BytecodeWriter.MAGIC}'")
+        val magic = input.bytes(BytecodeWriter.MAGIC.length, "сигнатура")
+        if (!magic.contentEquals(BytecodeWriter.MAGIC.toByteArray(Charsets.US_ASCII))) {
+            fail(BytecodeIssue.MAGIC, "неверная сигнатура файла, ожидалось '${BytecodeWriter.MAGIC}'")
         }
-        val versionMajor = input.readUnsignedShort()
-        val versionMinor = input.readUnsignedShort()
-        input.readUnsignedShort() // flags, зарезервировано
-        val entryFunctionIndex = input.readUnsignedShort()
-        if (versionMajor != BytecodeModule.CURRENT_VERSION_MAJOR) {
-            throw MalformedBytecodeException(
-                "неподдерживаемая мажорная версия формата: $versionMajor " +
-                    "(поддерживается ${BytecodeModule.CURRENT_VERSION_MAJOR})",
+        val versionMajor = input.u16("version_major")
+        val versionMinor = input.u16("version_minor")
+        if (versionMajor != BytecodeModule.CURRENT_VERSION_MAJOR || versionMinor != BytecodeModule.CURRENT_VERSION_MINOR) {
+            fail(
+                BytecodeIssue.VERSION,
+                "версия формата $versionMajor.$versionMinor не поддерживается " +
+                    "(поддерживается ${BytecodeModule.CURRENT_VERSION_MAJOR}.${BytecodeModule.CURRENT_VERSION_MINOR})",
             )
         }
-        return Header(versionMajor, versionMinor, entryFunctionIndex)
+        val flags = input.u16("flags")
+        if (flags != 0) {
+            fail(BytecodeIssue.FLAGS, "flags = 0x${flags.toString(16)}, в профиле $versionMajor.$versionMinor допустим только 0")
+        }
+        val entryFunctionIndex = input.u16("entry_function_idx")
+
+        val constants = readConstants(input)
+        val functionHeaders = readFunctionTable(input)
+        if (entryFunctionIndex >= functionHeaders.size) {
+            fail(BytecodeIssue.ENTRY, "entry_function_idx = $entryFunctionIndex вне таблицы из ${functionHeaders.size} функций")
+        }
+
+        val codeSize = input.u32("code_size")
+        if (codeSize > FormatLimits.MAX_CODE_BYTES) {
+            fail(BytecodeIssue.RESOURCE_LIMIT, "code_size = $codeSize больше предела реализации ${FormatLimits.MAX_CODE_BYTES}")
+        }
+        val codeBytes = input.bytes(codeSize.toInt(), "секция кода")
+        if (input.remaining != 0) {
+            fail(BytecodeIssue.LAYOUT, "после секции кода ${input.remaining} лишних байт (смещение ${input.position})")
+        }
+        checkContiguousCode(functionHeaders, codeSize)
+
+        val functions = functionHeaders.mapIndexed { index, header ->
+            val name = constants.getOrNull(header.nameConstIndex) as? ConstantValue.StringConst
+                ?: fail(
+                    BytecodeIssue.FUNCTION_NAME,
+                    "функция #$index: name_const_idx = ${header.nameConstIndex} не ссылается на String-константу",
+                )
+            FunctionEntry(
+                name = name.value,
+                nameConstIndex = header.nameConstIndex,
+                paramCount = header.paramCount,
+                localCount = header.localCount,
+                instructions = decodeInstructions(codeBytes, header, index, name.value),
+            )
+        }
+        return BytecodeModule(versionMajor, versionMinor, constants, functions, entryFunctionIndex)
     }
 
-    private fun readConstants(input: DataInputStream): List<ConstantValue> {
-        val count = input.readUnsignedShort()
-        return (0 until count).map {
-            when (val tag = input.readUnsignedByte()) {
-                TAG_INT -> ConstantValue.IntConst(input.readInt())
-                TAG_BOOL -> ConstantValue.BoolConst(input.readByte().toInt() != 0)
-                TAG_STRING -> {
-                    val length = input.readInt()
-                    val bytes = ByteArray(length)
-                    input.readFully(bytes)
-                    ConstantValue.StringConst(String(bytes, Charsets.UTF_8))
+    private fun readConstants(input: Cursor): List<ConstantValue> {
+        val count = input.u16("constant_count")
+        return (0 until count).map { index ->
+            when (val tag = input.u8("тег константы #$index")) {
+                TAG_INT -> ConstantValue.IntConst(input.i32("Int-константа #$index"))
+                TAG_BOOL -> when (val value = input.u8("Bool-константа #$index")) {
+                    0 -> ConstantValue.BoolConst(false)
+                    1 -> ConstantValue.BoolConst(true)
+                    else -> fail(BytecodeIssue.BOOLEAN, "Bool-константа #$index закодирована байтом $value, допустимы только 0 и 1")
                 }
-                else -> throw MalformedBytecodeException("неизвестный тег константы: $tag")
+                TAG_STRING -> {
+                    val length = input.u32("длина строки #$index")
+                    try {
+                        StringConstraints.checkLength(length)
+                        ConstantValue.StringConst(StringConstraints.decode(input.bytes(length.toInt(), "строка #$index")))
+                    } catch (e: BytecodeFormatException) {
+                        if (e.issue != BytecodeIssue.STRING) throw e
+                        fail(BytecodeIssue.STRING, "константа #$index: ${e.message}")
+                    }
+                }
+                else -> fail(BytecodeIssue.CONSTANT_TAG, "неизвестный тег константы #$index: $tag")
             }
         }
     }
 
-    private data class FunctionHeader(
+    private class FunctionHeader(
         val nameConstIndex: Int,
         val paramCount: Int,
         val localCount: Int,
-        val codeOffset: Int,
-        val codeLength: Int,
+        val codeOffset: Long,
+        val codeLength: Long,
     )
 
-    private fun readFunctionTable(input: DataInputStream): List<FunctionHeader> {
-        val count = input.readUnsignedShort()
-        return (0 until count).map {
+    private fun readFunctionTable(input: Cursor): List<FunctionHeader> {
+        val count = input.u16("function_count")
+        if (count == 0) {
+            fail(BytecodeIssue.LAYOUT, "таблица функций пуста")
+        }
+        return (0 until count).map { index ->
             FunctionHeader(
-                nameConstIndex = input.readUnsignedShort(),
-                paramCount = input.readUnsignedByte(),
-                localCount = input.readUnsignedByte(),
-                codeOffset = input.readInt(),
-                codeLength = input.readInt(),
+                nameConstIndex = input.u16("name_const_idx функции #$index"),
+                paramCount = input.u8("param_count функции #$index"),
+                localCount = input.u8("local_count функции #$index"),
+                codeOffset = input.u32("code_offset функции #$index"),
+                codeLength = input.u32("code_length функции #$index"),
             )
         }
     }
 
-    private fun decodeInstructions(codeBytes: ByteArray, offset: Int, length: Int): List<Instruction> {
-        val input = DataInputStream(ByteArrayInputStream(codeBytes, offset, length))
+    /** Код функций лежит подряд: первый offset 0, каждый следующий — конец предыдущего, последний конец — code_size. */
+    private fun checkContiguousCode(headers: List<FunctionHeader>, codeSize: Long) {
+        var expectedOffset = 0L
+        headers.forEachIndexed { index, header ->
+            if (header.codeOffset != expectedOffset) {
+                fail(
+                    BytecodeIssue.LAYOUT,
+                    "функция #$index: code_offset = ${header.codeOffset}, ожидался $expectedOffset (код без разрывов и наложений)",
+                )
+            }
+            if (header.codeLength == 0L) {
+                fail(BytecodeIssue.LAYOUT, "функция #$index: code_length = 0")
+            }
+            expectedOffset += header.codeLength
+            if (expectedOffset > codeSize) {
+                fail(BytecodeIssue.LAYOUT, "функция #$index выходит за пределы секции кода размером $codeSize")
+            }
+        }
+        if (expectedOffset != codeSize) {
+            fail(BytecodeIssue.LAYOUT, "сумма длин функций $expectedOffset не равна code_size = $codeSize")
+        }
+    }
+
+    private fun decodeInstructions(codeBytes: ByteArray, header: FunctionHeader, index: Int, name: String): List<Instruction> {
+        val start = header.codeOffset.toInt()
+        val end = start + header.codeLength.toInt()
+        val input = Cursor(codeBytes, start, end)
         val result = mutableListOf<Instruction>()
-        var consumed = 0
-        while (consumed < length) {
-            val opcodeByte = input.readUnsignedByte()
-            consumed += 1
-            val opcode = Opcode.fromCode(opcodeByte)
-            val instruction: Instruction = when (opcode) {
-                Opcode.LOAD_CONST -> Instruction.LoadConst(input.readUnsignedShort().also { consumed += 2 })
-                Opcode.LOAD_LOCAL -> Instruction.LoadLocal(input.readUnsignedByte().also { consumed += 1 })
-                Opcode.STORE_LOCAL -> Instruction.StoreLocal(input.readUnsignedByte().also { consumed += 1 })
+        while (input.remaining > 0) {
+            val offset = input.position - start
+            val where = "функция #$index '$name', +$offset"
+            val opcodeByte = input.u8(where)
+            val opcode = Opcode.fromCodeOrNull(opcodeByte)
+                ?: fail(BytecodeIssue.OPCODE, "$where: неизвестный опкод 0x${opcodeByte.toString(16).padStart(2, '0')}")
+            if (input.remaining < opcode.operandBytes) {
+                fail(BytecodeIssue.OPERAND, "$where: операнд $opcode обрезан концом функции")
+            }
+            result += when (opcode) {
+                Opcode.LOAD_CONST -> Instruction.LoadConst(input.u16(where))
+                Opcode.LOAD_LOCAL -> Instruction.LoadLocal(input.u8(where))
+                Opcode.STORE_LOCAL -> Instruction.StoreLocal(input.u8(where))
                 Opcode.ADD -> Instruction.Add
                 Opcode.SUB -> Instruction.Sub
                 Opcode.MUL -> Instruction.Mul
@@ -133,17 +191,64 @@ object BytecodeReader {
                 Opcode.CMP_LE -> Instruction.CmpLe
                 Opcode.CMP_GE -> Instruction.CmpGe
                 Opcode.NOT -> Instruction.Not
-                Opcode.JUMP -> Instruction.Jump(input.readInt().also { consumed += 4 })
-                Opcode.JUMP_IF_FALSE -> Instruction.JumpIfFalse(input.readInt().also { consumed += 4 })
-                Opcode.CALL -> Instruction.Call(input.readUnsignedShort().also { consumed += 2 })
+                Opcode.JUMP -> Instruction.Jump(jumpTarget(input.u32(where), header, where))
+                Opcode.JUMP_IF_FALSE -> Instruction.JumpIfFalse(jumpTarget(input.u32(where), header, where))
+                Opcode.CALL -> Instruction.Call(input.u16(where))
                 Opcode.RETURN -> Instruction.Return
                 Opcode.RETURN_VOID -> Instruction.ReturnVoid
                 Opcode.PRINT -> Instruction.Print
                 Opcode.PRINTLN -> Instruction.Println
                 Opcode.POP -> Instruction.Pop
             }
-            result += instruction
         }
         return result
+    }
+
+    private fun jumpTarget(target: Long, header: FunctionHeader, where: String): Int {
+        if (target >= header.codeLength) {
+            fail(BytecodeIssue.JUMP_TARGET, "$where: цель перехода $target вне кода функции длиной ${header.codeLength}")
+        }
+        return target.toInt()
+    }
+
+    private fun fail(issue: BytecodeIssue, message: String): Nothing = throw BytecodeFormatException(issue, message)
+
+    /** Курсор чтения big-endian полей с проверкой границ: нехватка байтов — TRUNCATED, а не исключение JVM. */
+    private class Cursor(private val bytes: ByteArray, start: Int = 0, private val end: Int = bytes.size) {
+        var position = start
+            private set
+
+        val remaining: Int get() = end - position
+
+        private fun require(count: Int, field: String) {
+            if (count < 0 || count > remaining) {
+                throw BytecodeFormatException(
+                    BytecodeIssue.TRUNCATED,
+                    "$field: нужно $count байт по смещению $position, осталось $remaining",
+                )
+            }
+        }
+
+        fun u8(field: String): Int {
+            require(1, field)
+            return bytes[position++].toInt() and 0xFF
+        }
+
+        fun u16(field: String): Int {
+            require(2, field)
+            return (u8(field) shl 8) or u8(field)
+        }
+
+        fun u32(field: String): Long {
+            require(4, field)
+            return (u16(field).toLong() shl 16) or u16(field).toLong()
+        }
+
+        fun i32(field: String): Int = u32(field).toInt()
+
+        fun bytes(count: Int, field: String): ByteArray {
+            require(count, field)
+            return bytes.copyOfRange(position, position + count).also { position += count }
+        }
     }
 }

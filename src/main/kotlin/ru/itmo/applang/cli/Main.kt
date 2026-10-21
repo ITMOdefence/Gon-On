@@ -1,21 +1,24 @@
 package ru.itmo.applang.cli
 
-import org.antlr.v4.runtime.CharStreams
-import org.antlr.v4.runtime.CommonTokenStream
-import ru.itmo.applang.ast.AstBuilder
+import ru.itmo.applang.bytecode.BytecodeFormatException
 import ru.itmo.applang.bytecode.BytecodeWriter
 import ru.itmo.applang.bytecode.Disassembler
-import ru.itmo.applang.codegen.BytecodeEmitter
-import ru.itmo.applang.codegen.CodegenLimitException
-import ru.itmo.applang.diagnostics.DiagnosticCollector
-import ru.itmo.applang.diagnostics.SyntaxErrorListener
-import ru.itmo.applang.parser.AppLangLexer
-import ru.itmo.applang.parser.AppLangParser
-import ru.itmo.applang.semantic.SemanticErrorCodes
-import ru.itmo.applang.semantic.TypeChecker
+import ru.itmo.applang.compiler.CompilationResult
+import ru.itmo.applang.compiler.Compiler
+import ru.itmo.applang.diagnostics.Diagnostic
+import java.io.IOException
+import java.io.PrintStream
+import java.nio.charset.CharacterCodingException
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.system.exitProcess
+
+/** Коды завершения `applangc`. */
+object ExitCodes {
+    const val OK = 0
+    const val COMPILATION_FAILED = 1
+    const val USAGE = 2
+}
 
 private class CliArgs(
     val inputFile: Path,
@@ -24,22 +27,13 @@ private class CliArgs(
     val dumpAst: Boolean,
 )
 
-private fun printUsageAndExit(): Nothing {
-    System.err.println(
-        """
-        Использование: applangc <file.al> [-o out.albc] [--disasm] [--dump-ast]
+private const val USAGE = """Использование: applangc <file.al> [-o out.albc] [--disasm] [--dump-ast]
 
-          -o <path>     путь к выходному файлу байткода (по умолчанию: <file>.albc)
-          --disasm      дополнительно вывести дизассемблированный байткод на stdout
-          --dump-ast    дополнительно вывести AST на stdout (для отладки)
-        """.trimIndent(),
-    )
-    exitProcess(2)
-}
+  -o <path>     путь к выходному файлу байткода (по умолчанию: <file>.albc)
+  --disasm      дополнительно вывести дизассемблированный байткод (модель в памяти) на stdout
+  --dump-ast    дополнительно вывести AST на stdout (для отладки)"""
 
-private fun parseArgs(args: Array<String>): CliArgs {
-    if (args.isEmpty()) printUsageAndExit()
-
+private fun parseArgs(args: Array<String>): CliArgs? {
     var input: Path? = null
     var output: Path? = null
     var disasm = false
@@ -49,7 +43,7 @@ private fun parseArgs(args: Array<String>): CliArgs {
     while (i < args.size) {
         when (args[i]) {
             "-o" -> {
-                if (i + 1 >= args.size) printUsageAndExit()
+                if (i + 1 >= args.size) return null
                 output = Path.of(args[i + 1])
                 i += 2
             }
@@ -62,73 +56,80 @@ private fun parseArgs(args: Array<String>): CliArgs {
                 i += 1
             }
             else -> {
-                if (input != null) printUsageAndExit()
+                if (input != null) return null
                 input = Path.of(args[i])
                 i += 1
             }
         }
     }
 
-    val inputFile = input ?: printUsageAndExit()
+    val inputFile = input ?: return null
     val outputFile = output ?: inputFile.resolveSibling(inputFile.fileName.toString().substringBeforeLast('.') + ".albc")
     return CliArgs(inputFile, outputFile, disasm, dumpAst)
 }
 
-fun main(args: Array<String>) {
-    val cli = parseArgs(args)
+/**
+ * Точка входа CLI без `exitProcess`, чтобы её можно было вызывать из тестов. При любой ошибке
+ * (исходника, предела формата, проверки байткода, ввода-вывода) выходной файл не создаётся и не
+ * перезаписывается, а сообщение «Скомпилировано» печатается только после успешной записи.
+ */
+fun run(args: Array<String>, out: PrintStream = System.out, err: PrintStream = System.err): Int {
+    val cli = parseArgs(args) ?: run {
+        err.println(USAGE)
+        return ExitCodes.USAGE
+    }
 
     if (!Files.exists(cli.inputFile)) {
-        System.err.println("Файл не найден: ${cli.inputFile}")
-        exitProcess(1)
+        err.println("Файл не найден: ${cli.inputFile}")
+        return ExitCodes.COMPILATION_FAILED
     }
-    val source = Files.readString(cli.inputFile)
-
-    val collector = DiagnosticCollector()
-    val errorListener = SyntaxErrorListener(collector)
-
-    val lexer = AppLangLexer(CharStreams.fromString(source, cli.inputFile.toString()))
-    lexer.removeErrorListeners()
-    lexer.addErrorListener(errorListener)
-
-    val tokens = CommonTokenStream(lexer)
-    val parser = AppLangParser(tokens)
-    parser.removeErrorListeners()
-    parser.addErrorListener(errorListener)
-
-    val programCtx = parser.program()
-    if (collector.hasErrors) {
-        reportAndExit(collector, cli.inputFile)
+    val source = try {
+        Files.readString(cli.inputFile)
+    } catch (e: CharacterCodingException) {
+        err.println("Не удалось прочитать ${cli.inputFile}: исходник должен быть в кодировке UTF-8")
+        return ExitCodes.COMPILATION_FAILED
+    } catch (e: IOException) {
+        err.println("Не удалось прочитать ${cli.inputFile}: ${e.message}")
+        return ExitCodes.COMPILATION_FAILED
     }
 
-    val program = AstBuilder().buildProgram(programCtx)
+    val result = Compiler.compile(source, cli.inputFile.toString())
     if (cli.dumpAst) {
-        println(program)
+        result.program?.let { out.println(it) }
     }
 
-    TypeChecker(collector).check(program)
-    if (collector.hasErrors) {
-        reportAndExit(collector, cli.inputFile)
-    }
-    // Диагностики-предупреждения (если появятся в будущих версиях) всё равно стоит показать.
-    collector.diagnostics.forEach { println(it) }
-
-    val module = try {
-        BytecodeEmitter().emit(program)
-    } catch (e: CodegenLimitException) {
-        collector.error(SemanticErrorCodes.LIMIT_EXCEEDED, e.message ?: "превышен предел формата", null)
-        reportAndExit(collector, cli.inputFile)
-    }
-    BytecodeWriter.writeToFile(module, cli.outputFile)
-    println("Скомпилировано: ${cli.inputFile} -> ${cli.outputFile}")
-
-    if (cli.disasm) {
-        println()
-        print(Disassembler.disassemble(module))
+    when (result) {
+        is CompilationResult.Failure -> {
+            reportErrors(err, cli.inputFile, result.diagnostics)
+            return ExitCodes.COMPILATION_FAILED
+        }
+        is CompilationResult.Success -> {
+            // Диагностики-предупреждения (если появятся в будущих версиях) всё равно стоит показать.
+            result.diagnostics.forEach { out.println(it) }
+            try {
+                BytecodeWriter.writeToFile(result.module, cli.outputFile)
+            } catch (e: BytecodeFormatException) {
+                err.println("Внутренняя ошибка компилятора: ${e.message}")
+                return ExitCodes.COMPILATION_FAILED
+            } catch (e: IOException) {
+                err.println("Не удалось записать ${cli.outputFile}: ${e.message}")
+                return ExitCodes.COMPILATION_FAILED
+            }
+            out.println("Скомпилировано: ${cli.inputFile} -> ${cli.outputFile}")
+            if (cli.disasm) {
+                out.println()
+                out.print(Disassembler.disassemble(result.module))
+            }
+            return ExitCodes.OK
+        }
     }
 }
 
-private fun reportAndExit(collector: DiagnosticCollector, file: Path): Nothing {
-    System.err.println("Ошибки компиляции ($file):")
-    collector.diagnostics.forEach { System.err.println("  $it") }
-    exitProcess(1)
+fun main(args: Array<String>) {
+    exitProcess(run(args))
+}
+
+private fun reportErrors(err: PrintStream, file: Path, diagnostics: List<Diagnostic>) {
+    err.println("Ошибки компиляции ($file):")
+    diagnostics.forEach { err.println("  $it") }
 }
