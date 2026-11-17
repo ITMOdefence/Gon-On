@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "status": "draft",
+  "functions": [
+    {
+      "name": "openWindow",
+      "group": "window",
+      "parameters": [{ "name": "title", "type": "String" }],
+      "returnType": "WindowResult"
+    },
+    {
+      "name": "setText",
+      "group": "window",
+      "parameters": [
+        { "name": "window", "type": "WindowRef" },
+        { "name": "text", "type": "String" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "addButton",
+      "group": "window",
+      "parameters": [
+        { "name": "window", "type": "WindowRef" },
+        { "name": "id", "type": "Int" },
+        { "name": "label", "type": "String" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "addTextInput",
+      "group": "window",
+      "parameters": [
+        { "name": "window", "type": "WindowRef" },
+        { "name": "id", "type": "Int" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "getText",
+      "group": "window",
+      "parameters": [
+        { "name": "window", "type": "WindowRef" },
+        { "name": "id", "type": "Int" }
+      ],
+      "returnType": "TextResult"
+    },
+    {
+      "name": "drawImage",
+      "group": "window",
+      "parameters": [
+        { "name": "window", "type": "WindowRef" },
+        { "name": "asset", "type": "String" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "drawMarker",
+      "group": "window",
+      "parameters": [
+        { "name": "window", "type": "WindowRef" },
+        { "name": "x", "type": "Int" },
+        { "name": "y", "type": "Int" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "listen",
+      "group": "network",
+      "parameters": [{ "name": "port", "type": "Int" }],
+      "returnType": "ListenerResult"
+    },
+    {
+      "name": "connect",
+      "group": "network",
+      "parameters": [
+        { "name": "address", "type": "String" },
+        { "name": "port", "type": "Int" }
+      ],
+      "returnType": "ConnectionResult"
+    },
+    {
+      "name": "sendText",
+      "group": "network",
+      "parameters": [
+        { "name": "connection", "type": "ConnectionRef" },
+        { "name": "text", "type": "String" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "closeConnection",
+      "group": "network",
+      "parameters": [{ "name": "connection", "type": "ConnectionRef" }],
+      "returnType": "Status"
+    },
+    {
+      "name": "closeListener",
+      "group": "network",
+      "parameters": [{ "name": "listener", "type": "ListenerRef" }],
+      "returnType": "Status"
+    },
+    {
+      "name": "capturePhoto",
+      "group": "device",
+      "parameters": [],
+      "returnType": "PhotoResult"
+    },
+    {
+      "name": "uploadPhoto",
+      "group": "device",
+      "parameters": [
+        { "name": "url", "type": "String" },
+        { "name": "photo", "type": "PhotoRef" }
+      ],
+      "returnType": "TextResult"
+    },
+    {
+      "name": "getDeviceLocation",
+      "group": "device",
+      "parameters": [],
+      "returnType": "LocationResult"
+    },
+    {
+      "name": "releasePhoto",
+      "group": "device",
+      "parameters": [{ "name": "photo", "type": "PhotoRef" }],
+      "returnType": "Status"
+    },
+    {
+      "name": "readText",
+      "group": "storage",
+      "parameters": [{ "name": "name", "type": "String" }],
+      "returnType": "TextResult"
+    },
+    {
+      "name": "writeText",
+      "group": "storage",
+      "parameters": [
+        { "name": "name", "type": "String" },
+        { "name": "text", "type": "String" }
+      ],
+      "returnType": "Status"
+    },
+    {
+      "name": "formatInt",
+      "group": "text",
+      "parameters": [{ "name": "value", "type": "Int" }],
+      "returnType": "String"
+    },
+    {
+      "name": "parseInt",
+      "group": "text",
+      "parameters": [{ "name": "text", "type": "String" }],
+      "returnType": "IntResult"
+    },
+    {
+      "name": "getField",
+      "group": "text",
+      "parameters": [
+        { "name": "text", "type": "String" },
+        { "name": "separator", "type": "String" },
+        { "name": "index", "type": "Int" }
+      ],
+      "returnType": "TextResult"
+    }
+  ]
+}
