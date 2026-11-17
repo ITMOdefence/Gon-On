@@ -1,15 +1,17 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "draft",
   "functions": [
     {
       "name": "openWindow",
+      "description": "Открывает окно с указанным заголовком и возвращает ссылку на него в результате операции.",
       "group": "window",
       "parameters": [{ "name": "title", "type": "String" }],
       "returnType": "WindowResult"
     },
     {
       "name": "setText",
+      "description": "Показывает указанный текст в окне приложения.",
       "group": "window",
       "parameters": [
         { "name": "window", "type": "WindowRef" },
@@ -19,6 +21,7 @@
     },
     {
       "name": "addButton",
+      "description": "Добавляет в окно кнопку с надписью label и идентификатором id, по которому приложение узнаёт о нажатии.",
       "group": "window",
       "parameters": [
         { "name": "window", "type": "WindowRef" },
@@ -29,6 +32,7 @@
     },
     {
       "name": "addTextInput",
+      "description": "Добавляет в окно поле ввода с идентификатором id, чтобы пользователь мог ввести текст.",
       "group": "window",
       "parameters": [
         { "name": "window", "type": "WindowRef" },
@@ -38,6 +42,7 @@
     },
     {
       "name": "getText",
+      "description": "Возвращает текст, введённый пользователем в поле с указанным идентификатором в этом окне.",
       "group": "window",
       "parameters": [
         { "name": "window", "type": "WindowRef" },
@@ -47,6 +52,7 @@
     },
     {
       "name": "drawImage",
+      "description": "Рисует в окне изображение из ресурсов приложения с именем asset.",
       "group": "window",
       "parameters": [
         { "name": "window", "type": "WindowRef" },
@@ -56,6 +62,7 @@
     },
     {
       "name": "drawMarker",
+      "description": "Рисует в окне метку в точке с координатами x и y, например поверх изображения карты.",
       "group": "window",
       "parameters": [
         { "name": "window", "type": "WindowRef" },
@@ -66,12 +73,14 @@
     },
     {
       "name": "listen",
+      "description": "Начинает ожидать входящие сетевые соединения на указанном порту и возвращает ссылку для управления прослушиванием.",
       "group": "network",
       "parameters": [{ "name": "port", "type": "Int" }],
       "returnType": "ListenerResult"
     },
     {
       "name": "connect",
+      "description": "Подключается к указанному сетевому адресу и порту и возвращает ссылку на соединение в результате операции.",
       "group": "network",
       "parameters": [
         { "name": "address", "type": "String" },
@@ -81,6 +90,7 @@
     },
     {
       "name": "sendText",
+      "description": "Отправляет текст через указанное открытое сетевое соединение.",
       "group": "network",
       "parameters": [
         { "name": "connection", "type": "ConnectionRef" },
@@ -90,24 +100,28 @@
     },
     {
       "name": "closeConnection",
+      "description": "Закрывает указанное сетевое соединение.",
       "group": "network",
       "parameters": [{ "name": "connection", "type": "ConnectionRef" }],
       "returnType": "Status"
     },
     {
       "name": "closeListener",
+      "description": "Прекращает ожидание новых соединений для указанной ссылки на прослушивание порта.",
       "group": "network",
       "parameters": [{ "name": "listener", "type": "ListenerRef" }],
       "returnType": "Status"
     },
     {
       "name": "capturePhoto",
+      "description": "Получает один снимок с камеры устройства и возвращает ссылку на снимок в результате операции.",
       "group": "device",
       "parameters": [],
       "returnType": "PhotoResult"
     },
     {
       "name": "uploadPhoto",
+      "description": "Отправляет снимок по ссылке photo на сервер по указанному URL и возвращает текст ответа сервера.",
       "group": "device",
       "parameters": [
         { "name": "url", "type": "String" },
@@ -117,24 +131,28 @@
     },
     {
       "name": "getDeviceLocation",
+      "description": "Запрашивает текущее местоположение устройства и возвращает его координаты либо ошибку, если получить их не удалось.",
       "group": "device",
       "parameters": [],
       "returnType": "LocationResult"
     },
     {
       "name": "releasePhoto",
+      "description": "Освобождает снимок, когда он больше не нужен приложению.",
       "group": "device",
       "parameters": [{ "name": "photo", "type": "PhotoRef" }],
       "returnType": "Status"
     },
     {
       "name": "readText",
+      "description": "Читает текст из файла с указанным именем в постоянном каталоге приложения.",
       "group": "storage",
       "parameters": [{ "name": "name", "type": "String" }],
       "returnType": "TextResult"
     },
     {
       "name": "writeText",
+      "description": "Сохраняет текст в файл с указанным именем в постоянном каталоге приложения.",
       "group": "storage",
       "parameters": [
         { "name": "name", "type": "String" },
@@ -144,18 +162,21 @@
     },
     {
       "name": "formatInt",
+      "description": "Преобразует целое число в строку для показа, сохранения или отправки по сети.",
       "group": "text",
       "parameters": [{ "name": "value", "type": "Int" }],
       "returnType": "String"
     },
     {
       "name": "parseInt",
+      "description": "Преобразует строку в целое число и возвращает результат либо ошибку, если преобразование невозможно.",
       "group": "text",
       "parameters": [{ "name": "text", "type": "String" }],
       "returnType": "IntResult"
     },
     {
       "name": "getField",
+      "description": "Извлекает поле с указанным индексом из текста, в котором поля разделены строкой separator.",
       "group": "text",
       "parameters": [
         { "name": "text", "type": "String" },
