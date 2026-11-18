@@ -31,6 +31,9 @@ import ru.itmo.applang.bytecode.FormatLimits
 import ru.itmo.applang.bytecode.StringConstraints
 import ru.itmo.applang.diagnostics.DiagnosticCollector
 import ru.itmo.applang.diagnostics.SourcePosition
+import ru.itmo.applang.platform.PlatformAbi
+import ru.itmo.applang.platform.PlatformCatalog
+import ru.itmo.applang.platform.PlatformUsage
 import java.util.BitSet
 
 /** Встроенные функции. Не являются пользовательскими функциями и не попадают в [FunctionTable]. */
@@ -111,12 +114,20 @@ class TypeChecker(private val collector: DiagnosticCollector) {
 
     private val functionTable = FunctionTable()
     private val classes = linkedMapOf<String, ClassInfo>()
+    private var platformEnabled = false
 
     fun check(program: Program) {
+        platformEnabled = PlatformUsage.detect(program)
+        program.usesPlatform = platformEnabled
+        if (platformEnabled) {
+            PlatformAbi.declarations().forEach { classes[it.name] = ClassInfo(it, classes.size) }
+        }
         collectClasses(program)
+        if (platformEnabled) program.resolvedAppStateClassIndex = classes["AppState"]?.index ?: -1
         collectFunctionSignatures(program)
         collectClassMembers()
         checkEntryPoint(program)
+        if (platformEnabled) checkEventHandlers(program)
         checkTableLimits(program)
         for (declaration in program.declarations) {
             when (declaration) {
@@ -137,7 +148,7 @@ class TypeChecker(private val collector: DiagnosticCollector) {
     /** Первый проход по классам: имена известны до проверки любых типов, поэтому ссылки вперёд допустимы. */
     private fun collectClasses(program: Program) {
         for (classDecl in program.classes) {
-            if (classDecl.name in BUILTIN_NAMES) {
+            if (classDecl.name in BUILTIN_NAMES || (platformEnabled && classDecl.name in PlatformAbi.reservedFunctions)) {
                 collector.error(
                     SemanticErrorCodes.NAME_CONFLICT,
                     "класс не может называться '${classDecl.name}': это встроенная функция",
@@ -155,7 +166,7 @@ class TypeChecker(private val collector: DiagnosticCollector) {
     private fun collectFunctionSignatures(program: Program) {
         for (function in program.functions) {
             checkParamCount(function.name, function.params, implicitThis = false, function.position)
-            if (function.name in BUILTIN_NAMES) {
+            if (function.name in BUILTIN_NAMES || (platformEnabled && function.name in PlatformAbi.reservedFunctions)) {
                 collector.error(
                     SemanticErrorCodes.NAME_CONFLICT,
                     "функция не может называться '${function.name}': это встроенная функция",
@@ -239,6 +250,23 @@ class TypeChecker(private val collector: DiagnosticCollector) {
         return true
     }
 
+    private fun checkEventHandlers(program: Program) {
+        for (event in PlatformAbi.events) {
+            program.functions.filter { it.name == event.name }.forEach { function ->
+                if ("AppState" !in classes) {
+                    collector.error(SemanticErrorCodes.INVALID_APP_STATE, "обработчик требует класс AppState", function.position)
+                }
+                if (function.params.map { it.type } != event.arguments || function.returnType != Type.UNIT) {
+                    collector.error(SemanticErrorCodes.INVALID_EVENT_HANDLER,
+                        "неверная сигнатура обработчика '${event.name}': ожидаются ${event.arguments} и результат Unit", function.position)
+                }
+            }
+            program.classes.flatMap { it.methods }.filter { it.name == event.name }.forEach {
+                collector.error(SemanticErrorCodes.INVALID_EVENT_HANDLER, "обработчик '${event.name}' должен быть функцией верхнего уровня", it.position)
+            }
+        }
+    }
+
     private fun checkParamCount(name: String, params: List<Param>, implicitThis: Boolean, position: SourcePosition) {
         val max = if (implicitThis) FormatLimits.MAX_PARAMETERS - 1 else FormatLimits.MAX_PARAMETERS
         if (params.size > max) {
@@ -262,10 +290,10 @@ class TypeChecker(private val collector: DiagnosticCollector) {
                 null,
             )
         }
-        if (program.classes.size > FormatLimits.MAX_TABLE_ENTRIES) {
+        if (classes.size > FormatLimits.MAX_TABLE_ENTRIES) {
             collector.error(
                 SemanticErrorCodes.LIMIT_EXCEEDED,
-                "в программе ${program.classes.size} классов, максимум ${FormatLimits.MAX_TABLE_ENTRIES}",
+                "в программе ${classes.size} классов (включая встроенные), максимум ${FormatLimits.MAX_TABLE_ENTRIES}",
                 null,
             )
         }
@@ -513,6 +541,9 @@ class TypeChecker(private val collector: DiagnosticCollector) {
         if (owner == null || field == null) {
             checkValueExpr(stmt.value, ctx, "запись поля '${stmt.fieldName}'")
             return
+        }
+        if (platformEnabled && owner.name in PlatformAbi.classNames) {
+            collector.error(SemanticErrorCodes.PLATFORM_READ_ONLY, "поля платформенного типа '${owner.name}' доступны только для чтения", stmt.position)
         }
         checkExpectedType(stmt.value, ctx, field.type, "запись поля '${owner.name}.${field.name}'")
         stmt.resolvedClassIndex = owner.index
@@ -843,6 +874,24 @@ class TypeChecker(private val collector: DiagnosticCollector) {
             return Type.UNIT
         }
 
+        if (platformEnabled) {
+            PlatformCatalog.find(expr.functionName)?.let { operation ->
+                checkArguments(operation.name, operation.parameters.map { it.type }, expr.args, expr.position, ctx)
+                return operation.returnType
+            }
+            if (expr.functionName == "bindAppState") {
+                if ("AppState" !in classes) {
+                    collector.error(SemanticErrorCodes.INVALID_APP_STATE, "bindAppState требует пользовательский класс AppState", expr.position)
+                }
+                checkArguments("bindAppState", listOf(Type.ClassType("AppState")), expr.args, expr.position, ctx)
+                return Type.UNIT
+            }
+            if (expr.functionName in PlatformAbi.classNames) {
+                collector.error(SemanticErrorCodes.PLATFORM_CONSTRUCTION, "тип '${expr.functionName}' создаётся только платформой", expr.position)
+                expr.args.forEach { checkValueExpr(it, ctx, "аргумент '${expr.functionName}'") }
+                return Type.ClassType(expr.functionName)
+            }
+        }
         classes[expr.functionName]?.let { return inferConstruction(expr, it, ctx) }
 
         val signature = functionTable.lookup(expr.functionName)

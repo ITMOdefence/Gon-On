@@ -71,6 +71,14 @@ object BytecodeWriter {
             if (module.isObjectProfile) {
                 writeClassTable(out, module.classes)
             }
+            if (module.isPlatformProfile) {
+                out.writeU16(module.events.appStateClassIndex, "app_state_class_idx")
+                out.writeU16(module.events.handlers.size, "handler_count")
+                for (handler in module.events.handlers) {
+                    out.writeU8(handler.eventKind, "event_kind")
+                    out.writeU16(handler.functionIndex, "function_idx обработчика")
+                }
+            }
             writeCodeSection(out, module.functions)
         }
         return buffer.toByteArray()
@@ -114,7 +122,7 @@ object BytecodeWriter {
         out.writeBytes(MAGIC) // 4 ASCII-байта, ровно как объявлено в заголовке
         out.writeU16(module.versionMajor, "version_major")
         out.writeU16(module.versionMinor, "version_minor")
-        out.writeU16(0, "flags") // flags, в профилях 1.0 и 2.0 всегда 0
+        out.writeU16(0, "flags") // flags, во всех поддерживаемых профилях 0
         out.writeU16(module.entryFunctionIndex, "entry_function_idx")
     }
 
@@ -216,6 +224,28 @@ object BytecodeWriter {
             Instruction.CmpLt, Instruction.CmpGt, Instruction.CmpLe, Instruction.CmpGe,
             Instruction.Not, Instruction.Return, Instruction.ReturnVoid, Instruction.Print,
             Instruction.Println, Instruction.Pop,
+            Instruction.OpenWindow,
+            Instruction.SetText,
+            Instruction.AddButton,
+            Instruction.AddTextInput,
+            Instruction.GetText,
+            Instruction.DrawImage,
+            Instruction.DrawMarker,
+            Instruction.Listen,
+            Instruction.Connect,
+            Instruction.SendText,
+            Instruction.CloseConnection,
+            Instruction.CloseListener,
+            Instruction.CapturePhoto,
+            Instruction.UploadPhoto,
+            Instruction.GetDeviceLocation,
+            Instruction.ReleasePhoto,
+            Instruction.ReadText,
+            Instruction.WriteText,
+            Instruction.FormatInt,
+            Instruction.ParseInt,
+            Instruction.GetTextField,
+            Instruction.BindAppState,
                 -> Unit
         }
     }

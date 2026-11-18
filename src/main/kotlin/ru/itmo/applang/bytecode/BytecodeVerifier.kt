@@ -1,5 +1,7 @@
 package ru.itmo.applang.bytecode
 
+import ru.itmo.applang.platform.PlatformAbi
+
 /**
  * Проверка готового модуля по правилам загрузчика и верификатора GVM до записи файла
  * (docs/backlog/base.md, BASE-06). Типизация AST не гарантирует отсутствие ошибок генератора,
@@ -41,10 +43,53 @@ object BytecodeVerifier {
         verifyFunctionTable(module)
         verifyClassTable(module)
         val returnModes = module.functions.mapIndexed { index, function -> returnModeOf(index, function) }
+        verifyPlatform(module, returnModes)
         module.functions.forEachIndexed { index, function ->
             val offsets = instructionOffsets(index, function)
             verifyInstructions(module, index, function, offsets)
             verifyStackHeights(module, index, function, offsets, returnModes)
+        }
+    }
+
+    private fun verifyPlatform(module: BytecodeModule, returnModes: List<ReturnMode>) {
+        if (!module.isPlatformProfile) {
+            if (module.events != EventTable()) fail(BytecodeIssue.LAYOUT, "EventTable допустима только в 3.0")
+            return
+        }
+        if (module.classes.size < FormatLimits.PLATFORM_CLASS_COUNT) {
+            fail(BytecodeIssue.PLATFORM_TYPE, "отсутствует встроенный префикс классов 3.0")
+        }
+        PlatformAbi.classes.forEachIndexed { index, expected ->
+            val actual = module.classes[index]
+            if (actual.name != expected.name || actual.methodFunctionIndices.isNotEmpty() ||
+                actual.fields.map { it.name to it.type } != expected.fields.map { it.first to PlatformAbi.fieldType(it.second) }) {
+                fail(BytecodeIssue.PLATFORM_TYPE, "неверное определение встроенного класса #$index ${expected.name}")
+            }
+        }
+        val events = module.events
+        if (events.appStateClassIndex == FormatLimits.NO_CLASS_INDEX) {
+            if (events.handlers.isNotEmpty()) fail(BytecodeIssue.EVENT_TABLE, "обработчикам нужен класс AppState")
+        } else {
+            val state = module.classes.getOrNull(events.appStateClassIndex)
+            if (events.appStateClassIndex < FormatLimits.PLATFORM_CLASS_COUNT || state?.name != "AppState") {
+                fail(BytecodeIssue.EVENT_TABLE, "app_state_class_idx должен указывать на пользовательский класс AppState")
+            }
+        }
+        if (events.handlers.size > FormatLimits.MAX_EVENT_HANDLERS) fail(BytecodeIssue.EVENT_TABLE, "слишком много обработчиков")
+        var previousKind = 0
+        val functions = mutableSetOf<Int>()
+        val methods = module.classes.flatMap { it.methodFunctionIndices }.toSet()
+        for (handler in events.handlers) {
+            val expected = PlatformAbi.events.firstOrNull { it.kind == handler.eventKind }
+                ?: fail(BytecodeIssue.EVENT_TABLE, "неизвестный event_kind ${handler.eventKind}")
+            val function = module.functions.getOrNull(handler.functionIndex)
+                ?: fail(BytecodeIssue.EVENT_TABLE, "неверный индекс функции обработчика")
+            if (handler.eventKind <= previousKind || !functions.add(handler.functionIndex) ||
+                handler.functionIndex == module.entryFunctionIndex || handler.functionIndex in methods ||
+                function.paramCount != expected.arguments.size || returnModes[handler.functionIndex] != ReturnMode.VOID) {
+                fail(BytecodeIssue.EVENT_TABLE, "неверное описание обработчика ${handler.eventKind}")
+            }
+            previousKind = handler.eventKind
         }
     }
 
@@ -78,7 +123,7 @@ object BytecodeVerifier {
         }
         val entry = module.functions[module.entryFunctionIndex]
         if (entry.paramCount != 0) {
-            fail(BytecodeIssue.ENTRY, "точка входа '${entry.name}' профиля 2.0 должна иметь param_count = 0, а не ${entry.paramCount}")
+            fail(BytecodeIssue.ENTRY, "точка входа '${entry.name}' объектного профиля должна иметь param_count = 0, а не ${entry.paramCount}")
         }
 
         val classNames = mutableSetOf<String>()
@@ -233,11 +278,26 @@ object BytecodeVerifier {
                         "$where: индекс функции ${instruction.functionIndex} вне таблицы из ${module.functions.size}",
                     )
                 }
-                is Instruction.AllocObject -> checkClass(module, instruction.classIndex, where)
+                is Instruction.AllocObject -> {
+                    checkClass(module, instruction.classIndex, where)
+                    checkWritableClass(module, instruction.classIndex, where)
+                }
                 is Instruction.GetField -> checkField(module, instruction.classIndex, instruction.fieldIndex, where)
-                is Instruction.SetField -> checkField(module, instruction.classIndex, instruction.fieldIndex, where)
+                is Instruction.SetField -> {
+                    checkField(module, instruction.classIndex, instruction.fieldIndex, where)
+                    checkWritableClass(module, instruction.classIndex, where)
+                }
+                Instruction.BindAppState -> if (module.events.appStateClassIndex == FormatLimits.NO_CLASS_INDEX) {
+                    fail(BytecodeIssue.EVENT_TABLE, "$where: BIND_APP_STATE без AppState в EventTable")
+                }
                 else -> Unit
             }
+        }
+    }
+
+    private fun checkWritableClass(module: BytecodeModule, classIndex: Int, where: String) {
+        if (module.isPlatformProfile && classIndex < FormatLimits.PLATFORM_CLASS_COUNT) {
+            fail(BytecodeIssue.PLATFORM_TYPE, "$where: встроенные объекты создаёт и изменяет только платформа")
         }
     }
 
@@ -375,6 +435,10 @@ object BytecodeVerifier {
         is Instruction.AllocObject -> StackEffect(0, 1)
         is Instruction.GetField -> StackEffect(1, 1)
         is Instruction.SetField -> StackEffect(2, 0)
+        else -> StackEffect(
+            checkNotNull(PlatformAbi.stackArguments(instruction.opcode)) { "неизвестный эффект стека ${instruction.opcode}" },
+            if (instruction == Instruction.BindAppState) 0 else 1,
+        )
     }
 
     private fun successors(instruction: Instruction, index: Int, offsets: LongArray, effect: StackEffect): List<Int> {

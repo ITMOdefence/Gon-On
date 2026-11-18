@@ -6,7 +6,7 @@ package ru.itmo.applang.bytecode
  * или изменении опкода обновляй оба места в одном коммите.
  *
  * Диапазон 0x01-0x3F зарезервирован за v1. Профиль 2.0 добавляет ровно 0x40-0x42, не меняя
- * семантику кодов v1; 0x43 и далее не назначены. [sinceVersionMajor] — минимальная мажорная
+ * семантику кодов v1; 3.0 добавляет 0x50–0x65. [sinceVersionMajor] — минимальная мажорная
  * версия формата, в которой опкод допустим.
  */
 enum class Opcode(val code: Int, val operandBytes: Int = 0, val sinceVersionMajor: Int = 1) {
@@ -47,6 +47,30 @@ enum class Opcode(val code: Int, val operandBytes: Int = 0, val sinceVersionMajo
     ALLOC_OBJECT(0x40, operandBytes = 2, sinceVersionMajor = 2),
     GET_FIELD(0x41, operandBytes = 4, sinceVersionMajor = 2),
     SET_FIELD(0x42, operandBytes = 4, sinceVersionMajor = 2),
+
+    // Платформенный профиль 3.0 (docs/PLATFORM_CONTRACT.md §3.2).
+    OPEN_WINDOW(0x50, sinceVersionMajor = 3),
+    SET_TEXT(0x51, sinceVersionMajor = 3),
+    ADD_BUTTON(0x52, sinceVersionMajor = 3),
+    ADD_TEXT_INPUT(0x53, sinceVersionMajor = 3),
+    GET_TEXT(0x54, sinceVersionMajor = 3),
+    DRAW_IMAGE(0x55, sinceVersionMajor = 3),
+    DRAW_MARKER(0x56, sinceVersionMajor = 3),
+    LISTEN(0x57, sinceVersionMajor = 3),
+    CONNECT(0x58, sinceVersionMajor = 3),
+    SEND_TEXT(0x59, sinceVersionMajor = 3),
+    CLOSE_CONNECTION(0x5A, sinceVersionMajor = 3),
+    CLOSE_LISTENER(0x5B, sinceVersionMajor = 3),
+    CAPTURE_PHOTO(0x5C, sinceVersionMajor = 3),
+    UPLOAD_PHOTO(0x5D, sinceVersionMajor = 3),
+    GET_DEVICE_LOCATION(0x5E, sinceVersionMajor = 3),
+    RELEASE_PHOTO(0x5F, sinceVersionMajor = 3),
+    READ_TEXT(0x60, sinceVersionMajor = 3),
+    WRITE_TEXT(0x61, sinceVersionMajor = 3),
+    FORMAT_INT(0x62, sinceVersionMajor = 3),
+    PARSE_INT(0x63, sinceVersionMajor = 3),
+    GET_TEXT_FIELD(0x64, sinceVersionMajor = 3),
+    BIND_APP_STATE(0x65, sinceVersionMajor = 3),
     ;
 
     /** Полная длина закодированной инструкции: байт опкода и операнды фиксированной ширины. */

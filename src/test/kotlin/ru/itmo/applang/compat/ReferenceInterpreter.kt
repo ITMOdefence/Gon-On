@@ -28,7 +28,11 @@ data class ExecutionResult(val stdout: String, val returnValue: Value?)
  * short-circuit), пока настоящая ВМ недоступна. Модуль считается уже проверенным верификатором,
  * поэтому структурные проверки здесь минимальны; динамические проверки GET/SET повторяют GVM.
  */
-class ReferenceInterpreter(private val module: BytecodeModule, private val maxSteps: Long = 5_000_000) {
+class ReferenceInterpreter(
+    private val module: BytecodeModule,
+    private val maxSteps: Long = 5_000_000,
+    private val platformHost: ((Instruction, List<Value>) -> Value?)? = null,
+) {
     private val output = StringBuilder()
     private var steps = 0L
 
@@ -117,6 +121,14 @@ class ReferenceInterpreter(private val module: BytecodeModule, private val maxSt
                     val declared = module.classes[instruction.classIndex].fields[instruction.fieldIndex].type
                     if (!matches(value, declared)) throw ExecutionFault("TYPE: значение не соответствует типу поля")
                     receiver.fields[instruction.fieldIndex] = value
+                }
+                else -> {
+                    val count = ru.itmo.applang.platform.PlatformAbi.stackArguments(instruction.opcode)
+                        ?: throw ExecutionFault("неизвестная инструкция")
+                    val args = List(count) { frame.pop() }
+                    val host = platformHost ?: throw ExecutionFault("платформенная операция требует тестовый host: ${instruction.opcode}")
+                    val value = host(instruction, args)
+                    if (instruction != Instruction.BindAppState) frame.push(value ?: throw ExecutionFault("host не вернул результат"))
                 }
             }
         }

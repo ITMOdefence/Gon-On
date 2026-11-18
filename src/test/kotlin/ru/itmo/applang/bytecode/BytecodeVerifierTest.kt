@@ -147,7 +147,7 @@ class BytecodeVerifierTest {
 
         @JvmStatic
         fun invalidModules() = listOf(
-            Arguments.of("неподдерживаемая версия", main(ReturnVoid).copy(versionMajor = 3), BytecodeIssue.VERSION),
+            Arguments.of("неподдерживаемая версия", main(ReturnVoid).copy(versionMajor = 4), BytecodeIssue.VERSION),
             Arguments.of("пустая таблица функций", main(ReturnVoid).copy(functions = emptyList()), BytecodeIssue.LAYOUT),
             Arguments.of("entry вне таблицы", main(ReturnVoid).copy(entryFunctionIndex = 1), BytecodeIssue.ENTRY),
             Arguments.of("функция без инструкций", main(), BytecodeIssue.LAYOUT),

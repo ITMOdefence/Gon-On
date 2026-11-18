@@ -97,6 +97,9 @@ data class ClassDecl(
 data class Program(
     val declarations: List<TopLevelDecl>,
 ) {
+    /** Профиль платформы определяет TypeChecker до назначения индексов классов. */
+    var usesPlatform: Boolean = false
+    var resolvedAppStateClassIndex: Int = -1
     val functions: List<FunctionDecl> get() = declarations.filterIsInstance<FunctionDecl>()
     val classes: List<ClassDecl> get() = declarations.filterIsInstance<ClassDecl>()
 }

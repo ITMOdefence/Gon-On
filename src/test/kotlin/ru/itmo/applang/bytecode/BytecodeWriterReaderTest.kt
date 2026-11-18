@@ -234,7 +234,7 @@ class BytecodeWriterReaderTest {
         val codeSizeField = (0 until 4).fold(0) { acc, i -> (acc shl 8) or (bytes[codeSizeOffset + i].toInt() and 0xFF) }
 
         // Assert
-        assertEquals(Opcode.entries.toSet(), instructions.map { it.opcode }.toSet())
+        assertEquals(Opcode.entries.filter { it.sinceVersionMajor <= 2 }.toSet(), instructions.map { it.opcode }.toSet())
         assertEquals(expectedCodeSize, codeSizeField)
     }
 
@@ -244,7 +244,7 @@ class BytecodeWriterReaderTest {
         @JvmStatic
         fun corruptions() = listOf(
             Arguments.of("неверная сигнатура", { b: ByteArray -> b.with(0, 'X'.code) }, BytecodeIssue.MAGIC),
-            Arguments.of("неизвестная мажорная версия 3", { b: ByteArray -> b.with(5, 3) }, BytecodeIssue.VERSION),
+            Arguments.of("неизвестная мажорная версия 4", { b: ByteArray -> b.with(5, 4) }, BytecodeIssue.VERSION),
             Arguments.of("неизвестная минорная версия 1.1", { b: ByteArray -> b.with(7, 1) }, BytecodeIssue.VERSION),
             Arguments.of("ненулевые flags", { b: ByteArray -> b.with(9, 1) }, BytecodeIssue.FLAGS),
             Arguments.of("entry вне таблицы функций", { b: ByteArray -> b.with(11, 1) }, BytecodeIssue.ENTRY),

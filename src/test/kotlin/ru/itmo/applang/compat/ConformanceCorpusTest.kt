@@ -31,9 +31,11 @@ class ConformanceCorpusTest {
             val expectedIssue = entry.expectedIssue
             if (expectedIssue == null) {
                 val module = BytecodeReader.readFromBytes(bytes)
-                val result = ReferenceInterpreter(module).run()
-                assertEquals(entry.stdout, result.stdout, entry.path)
-                assertEquals(entry.returnValue, result.returnValue, entry.path)
+                if (!entry.loadOnly) {
+                    val result = ReferenceInterpreter(module).run()
+                    assertEquals(entry.stdout, result.stdout, entry.path)
+                    assertEquals(entry.returnValue, result.returnValue, entry.path)
+                }
                 assertEquals(entry.profile, "${module.versionMajor}.${module.versionMinor}", entry.path)
             } else {
                 val error = assertThrows(BytecodeFormatException::class.java, { BytecodeReader.readFromBytes(bytes) }, entry.path)
@@ -55,6 +57,8 @@ class ConformanceCorpusTest {
         assertEquals(required, issues, "без файла остались категории: ${required - issues}")
         assertTrue(entries.any { it.expectedIssue == null && it.profile == "1.0" })
         assertTrue(entries.any { it.expectedIssue == null && it.profile == "2.0" })
+        assertTrue(entries.any { it.expectedIssue == null && it.profile == "3.0" })
+        assertTrue(manifest.contains("\"execution\": \"load-only\""))
         entries.forEach { assertTrue(manifest.contains("\"path\": \"${it.path}\""), it.path) }
         val filesOnDisk = Files.walk(directory).filter { it.toString().endsWith(".albc") }.count()
         assertEquals(entries.size.toLong(), filesOnDisk)

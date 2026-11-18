@@ -10,6 +10,8 @@ package ru.itmo.applang.bytecode
  * они здесь не придумываются (docs/backlog/base.md, BASE-04).
  */
 object FormatLimits {
+    const val PLATFORM_CLASS_COUNT = 13
+    const val MAX_EVENT_HANDLERS = 4
     /** Максимум для поля u8: `param_count`, `local_count`, номер локального слота. */
     const val MAX_U8 = 0xFF
 

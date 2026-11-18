@@ -59,8 +59,9 @@ object BytecodeReader {
         if (entryFunctionIndex >= functionHeaders.size) {
             fail(BytecodeIssue.ENTRY, "entry_function_idx = $entryFunctionIndex вне таблицы из ${functionHeaders.size} функций")
         }
-        // ClassTable есть только в профиле 2.0 и лежит до code_size.
-        val classes = if (versionMajor == BytecodeModule.OBJECT_VERSION_MAJOR) readClassTable(input, constants) else emptyList()
+        // ClassTable есть в 2.0/3.0; в 3.0 перед code_size добавлена EventTable.
+        val classes = if (versionMajor >= BytecodeModule.OBJECT_VERSION_MAJOR) readClassTable(input, constants) else emptyList()
+        val events = if (versionMajor == BytecodeModule.PLATFORM_VERSION_MAJOR) readEventTable(input) else EventTable()
 
         val codeSize = input.u32("code_size")
         if (codeSize > FormatLimits.MAX_CODE_BYTES) {
@@ -86,7 +87,18 @@ object BytecodeReader {
                 instructions = decodeInstructions(codeBytes, header, index, name.value, versionMajor),
             )
         }
-        return BytecodeModule(versionMajor, versionMinor, constants, functions, entryFunctionIndex, classes)
+        return BytecodeModule(versionMajor, versionMinor, constants, functions, entryFunctionIndex, classes, events)
+    }
+
+    private fun readEventTable(input: Cursor): EventTable {
+        val stateIndex = input.u16("app_state_class_idx")
+        val count = input.u16("handler_count")
+        if (count > FormatLimits.MAX_EVENT_HANDLERS) {
+            fail(BytecodeIssue.EVENT_TABLE, "handler_count = $count, максимум ${FormatLimits.MAX_EVENT_HANDLERS}")
+        }
+        return EventTable(stateIndex, List(count) {
+            EventHandlerEntry(input.u8("event_kind"), input.u16("function_idx обработчика"))
+        })
     }
 
     private fun readClassTable(input: Cursor, constants: List<ConstantValue>): List<ClassEntry> {
@@ -259,6 +271,28 @@ object BytecodeReader {
                 Opcode.ALLOC_OBJECT -> Instruction.AllocObject(input.u16(where))
                 Opcode.GET_FIELD -> Instruction.GetField(input.u16(where), input.u16(where))
                 Opcode.SET_FIELD -> Instruction.SetField(input.u16(where), input.u16(where))
+                Opcode.OPEN_WINDOW -> Instruction.OpenWindow
+                Opcode.SET_TEXT -> Instruction.SetText
+                Opcode.ADD_BUTTON -> Instruction.AddButton
+                Opcode.ADD_TEXT_INPUT -> Instruction.AddTextInput
+                Opcode.GET_TEXT -> Instruction.GetText
+                Opcode.DRAW_IMAGE -> Instruction.DrawImage
+                Opcode.DRAW_MARKER -> Instruction.DrawMarker
+                Opcode.LISTEN -> Instruction.Listen
+                Opcode.CONNECT -> Instruction.Connect
+                Opcode.SEND_TEXT -> Instruction.SendText
+                Opcode.CLOSE_CONNECTION -> Instruction.CloseConnection
+                Opcode.CLOSE_LISTENER -> Instruction.CloseListener
+                Opcode.CAPTURE_PHOTO -> Instruction.CapturePhoto
+                Opcode.UPLOAD_PHOTO -> Instruction.UploadPhoto
+                Opcode.GET_DEVICE_LOCATION -> Instruction.GetDeviceLocation
+                Opcode.RELEASE_PHOTO -> Instruction.ReleasePhoto
+                Opcode.READ_TEXT -> Instruction.ReadText
+                Opcode.WRITE_TEXT -> Instruction.WriteText
+                Opcode.FORMAT_INT -> Instruction.FormatInt
+                Opcode.PARSE_INT -> Instruction.ParseInt
+                Opcode.GET_TEXT_FIELD -> Instruction.GetTextField
+                Opcode.BIND_APP_STATE -> Instruction.BindAppState
             }
         }
         return result

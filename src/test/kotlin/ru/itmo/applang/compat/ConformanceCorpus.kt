@@ -27,6 +27,8 @@ data class CorpusEntry(
     /** Откуда взято ожидание вывода: из спецификации примера или из модельной машины. */
     val expectationSource: String? = null,
     val sourceFile: String? = null,
+    /** Проверяется загрузка; исполнение требует реальной платформы. */
+    val loadOnly: Boolean = false,
 )
 
 /**
@@ -40,7 +42,7 @@ data class CorpusEntry(
  */
 object ConformanceCorpus {
 
-    fun entries(): List<CorpusEntry> = validEntries() + invalidProcedural() + invalidObject()
+    fun entries(): List<CorpusEntry> = validEntries() + platformEntries() + invalidProcedural() + invalidObject() + invalidPlatform()
 
     // ------------------------------------------------------------------ корректные файлы
 
@@ -74,6 +76,46 @@ object ConformanceCorpus {
             )
         }
         return examples + generated
+    }
+
+    private fun platformEntries(): List<CorpusEntry> = listOf(
+        CorpusEntry("valid/platform_calls.albc", "3.0", "все платформенные инструкции; main не вызывает устройства",
+            Examples.compile("platform_calls").bytes, stdout = "", returnValue = Value.IntValue(0),
+            expectationSource = "specification", sourceFile = "examples/platform_calls.al"),
+        CorpusEntry("valid/platform_app.albc", "3.0", "окно, AppState и четыре обработчика; требуется платформа",
+            Examples.compile("platform_app").bytes, expectationSource = "platform-contract",
+            sourceFile = "examples/platform_app.al", loadOnly = true),
+    )
+
+    private fun invalidPlatform(): List<CorpusEntry> {
+        val app = Examples.compile("platform_app").module
+        val calls = Examples.compile("platform_calls").module
+        val mainIndex = calls.entryFunctionIndex
+        fun main(vararg instructions: Instruction) = raw(calls.copy(functions = calls.functions.toMutableList().also {
+            it[mainIndex] = it[mainIndex].copy(instructions = instructions.toList())
+        }))
+        val classes = app.classes.toMutableList().also { it[5] = it[5].copy(fields = emptyList()) }
+        return listOf(
+            invalid("platform_builtin_shape", "3.0", BytecodeIssue.PLATFORM_TYPE, "Status без обязательных полей", raw(app.copy(classes = classes))),
+            invalid("platform_builtin_alloc", "3.0", BytecodeIssue.PLATFORM_TYPE, "создание WindowRef байткодом",
+                main(Instruction.AllocObject(0), Instruction.Pop, Instruction.ReturnVoid)),
+            invalid("platform_builtin_set", "3.0", BytecodeIssue.PLATFORM_TYPE, "недостижимая запись Status.ok",
+                main(Instruction.ReturnVoid, Instruction.SetField(5, 0))),
+            invalid("platform_event_kind", "3.0", BytecodeIssue.EVENT_TABLE, "неизвестный event_kind",
+                raw(app.copy(events = app.events.copy(handlers = listOf(app.events.handlers[0].copy(eventKind = 5)))))),
+            invalid("platform_event_order", "3.0", BytecodeIssue.EVENT_TABLE, "события в обратном порядке",
+                raw(app.copy(events = app.events.copy(handlers = app.events.handlers.reversed())))),
+            invalid("platform_event_duplicate", "3.0", BytecodeIssue.EVENT_TABLE, "повтор обработчика",
+                raw(app.copy(events = app.events.copy(handlers = listOf(app.events.handlers[0], app.events.handlers[0]))))),
+            invalid("platform_state_class", "3.0", BytecodeIssue.EVENT_TABLE, "WindowRef вместо AppState",
+                raw(app.copy(events = app.events.copy(appStateClassIndex = 0)))),
+            invalid("platform_bind_without_state", "3.0", BytecodeIssue.EVENT_TABLE, "BIND_APP_STATE без метаданных",
+                main(Instruction.BindAppState, Instruction.ReturnVoid)),
+            invalid("platform_call_underflow", "3.0", BytecodeIssue.STACK_UNDERFLOW, "ADD_BUTTON без аргументов",
+                main(Instruction.AddButton, Instruction.Pop, Instruction.ReturnVoid)),
+            invalid("platform_result_not_consumed", "3.0", BytecodeIssue.RETURN, "результат CAPTURE_PHOTO оставлен на стеке",
+                main(Instruction.CapturePhoto, Instruction.ReturnVoid)),
+        )
     }
 
     // ------------------------------------------------------------------ испорченные 1.0
@@ -110,7 +152,7 @@ object ConformanceCorpus {
         }
         return listOf(
             invalid("bad_magic", "1.0", BytecodeIssue.MAGIC, "сигнатура XLBC вместо ALBC", hello.with(0, 'X'.code)),
-            invalid("version_3_0", "?", BytecodeIssue.VERSION, "неизвестная мажорная версия 3.0", hello.with(5, 3)),
+            invalid("version_4_0", "?", BytecodeIssue.VERSION, "неизвестная мажорная версия 4.0", hello.with(5, 4)),
             invalid("version_1_1", "?", BytecodeIssue.VERSION, "неизвестная минорная версия 1.1", hello.with(7, 1)),
             invalid("flags_nonzero", "1.0", BytecodeIssue.FLAGS, "flags = 1", hello.with(9, 1)),
             invalid("entry_out_of_range", "1.0", BytecodeIssue.ENTRY, "entry_function_idx = 1 при одной функции", hello.with(11, 1)),
@@ -260,7 +302,8 @@ object ConformanceCorpus {
             )
             entry.expectedIssue?.let { fields += "\"issue\": ${json(it.name)}" }
             entry.stdout?.let { fields += "\"stdout\": ${json(it)}" }
-            if (entry.expectedIssue == null) fields += "\"returnValue\": ${returnValueJson(entry.returnValue)}"
+            fields += "\"execution\": ${json(if (entry.loadOnly) "load-only" else if (entry.expectedIssue == null) "run" else "none")}"
+            if (entry.expectedIssue == null && !entry.loadOnly) fields += "\"returnValue\": ${returnValueJson(entry.returnValue)}"
             entry.expectationSource?.let { fields += "\"expectationSource\": ${json(it)}" }
             append("    { ").append(fields.joinToString(", ")).append(" }")
             appendLine(if (index < entries.lastIndex) "," else "")
@@ -304,6 +347,9 @@ object ConformanceCorpus {
           (`null` — `main` без результата). `expectationSource: "specification"` — ожидание
           выписано по смыслу исходника, `"reference-interpreter"` — получено модельной машиной
           компилятора. Исходник лежит рядом в `.al`.
+        - `execution: "load-only"` — проверяется только загрузка и структура; запуск требует
+          платформенных backend. Поля stdout/returnValue отсутствуют, подмены ОС в наборе нет.
+          Старые GVM должны отказаться от профиля 3.0 с VERSION; приёмка этих файлов требует GVM 3.0.
         - `expect: "reject"` — файл нарушает контракт. GVM обязана отказать при загрузке;
           `issue` — ожидаемая категория `BytecodeIssue` из документации верификатора GVM.
 

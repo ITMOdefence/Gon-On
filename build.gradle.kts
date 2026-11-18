@@ -63,6 +63,11 @@ tasks.test {
     }
 }
 
+// Каталог поставляется вместе с CLI; запуск не зависит от текущего каталога.
+tasks.processResources {
+    from("platform-api.json")
+}
+
 // Набор .albc-файлов совместимости для команды GVM: корректные файлы с ожидаемым выводом и
 // испорченные с ожидаемой категорией отказа + manifest.json (src/test/.../compat/ConformanceCorpus.kt).
 tasks.register<JavaExec>("conformanceCorpus") {

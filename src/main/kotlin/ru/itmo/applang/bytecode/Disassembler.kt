@@ -19,7 +19,7 @@ object Disassembler {
         }
         sb.appendLine()
 
-        // ClassTable есть только в профиле 2.0; дамп 1.0 не меняется.
+        // ClassTable есть в 2.0/3.0; дамп 1.0 не меняется.
         module.classes.forEachIndexed { index, classEntry ->
             sb.appendLine(".class ${classEntry.name}  ; class $index")
             classEntry.fields.forEachIndexed { fieldIndex, field ->
@@ -28,6 +28,14 @@ object Disassembler {
             classEntry.methodFunctionIndices.forEach { functionIndex ->
                 val name = module.functions.getOrNull(functionIndex)?.name ?: "?"
                 sb.appendLine("  method $functionIndex: $name")
+            }
+            sb.appendLine()
+        }
+
+        if (module.isPlatformProfile) {
+            sb.appendLine(".events state=${module.events.appStateClassIndex}")
+            module.events.handlers.forEach {
+                sb.appendLine("  event ${it.eventKind}: function ${it.functionIndex}")
             }
             sb.appendLine()
         }
@@ -101,6 +109,28 @@ object Disassembler {
         Instruction.Print -> "PRINT"
         Instruction.Println -> "PRINTLN"
         Instruction.Pop -> "POP"
+        Instruction.OpenWindow -> "OPEN_WINDOW"
+        Instruction.SetText -> "SET_TEXT"
+        Instruction.AddButton -> "ADD_BUTTON"
+        Instruction.AddTextInput -> "ADD_TEXT_INPUT"
+        Instruction.GetText -> "GET_TEXT"
+        Instruction.DrawImage -> "DRAW_IMAGE"
+        Instruction.DrawMarker -> "DRAW_MARKER"
+        Instruction.Listen -> "LISTEN"
+        Instruction.Connect -> "CONNECT"
+        Instruction.SendText -> "SEND_TEXT"
+        Instruction.CloseConnection -> "CLOSE_CONNECTION"
+        Instruction.CloseListener -> "CLOSE_LISTENER"
+        Instruction.CapturePhoto -> "CAPTURE_PHOTO"
+        Instruction.UploadPhoto -> "UPLOAD_PHOTO"
+        Instruction.GetDeviceLocation -> "GET_DEVICE_LOCATION"
+        Instruction.ReleasePhoto -> "RELEASE_PHOTO"
+        Instruction.ReadText -> "READ_TEXT"
+        Instruction.WriteText -> "WRITE_TEXT"
+        Instruction.FormatInt -> "FORMAT_INT"
+        Instruction.ParseInt -> "PARSE_INT"
+        Instruction.GetTextField -> "GET_TEXT_FIELD"
+        Instruction.BindAppState -> "BIND_APP_STATE"
         is Instruction.AllocObject ->
             "ALLOC_OBJECT ${instruction.classIndex}  ; ${module.classes.getOrNull(instruction.classIndex)?.name ?: "?"}"
         is Instruction.GetField ->

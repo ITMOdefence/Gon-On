@@ -89,8 +89,10 @@ data class BytecodeModule(
     val functions: List<FunctionEntry>,
     val entryFunctionIndex: Int,
     val classes: List<ClassEntry> = emptyList(),
+    val events: EventTable = EventTable(),
 ) {
-    val isObjectProfile: Boolean get() = versionMajor == OBJECT_VERSION_MAJOR
+    val isObjectProfile: Boolean get() = versionMajor == OBJECT_VERSION_MAJOR || isPlatformProfile
+    val isPlatformProfile: Boolean get() = versionMajor == PLATFORM_VERSION_MAJOR
 
     companion object {
         /** Процедурный профиль `.albc` 1.0. */
@@ -99,10 +101,24 @@ data class BytecodeModule(
         /** Объектный профиль `.albc` 2.0. */
         const val OBJECT_VERSION_MAJOR = 2
 
-        /** Единственная поддерживаемая minor-версия обоих профилей. */
+        const val PLATFORM_VERSION_MAJOR = 3
+
+        /** Единственная поддерживаемая minor-версия трёх профилей. */
         const val VERSION_MINOR = 0
 
         /** Поддерживаемые пары (major, minor); всё остальное отклоняется. */
-        val SUPPORTED_VERSIONS = setOf(PROCEDURAL_VERSION_MAJOR to VERSION_MINOR, OBJECT_VERSION_MAJOR to VERSION_MINOR)
+        val SUPPORTED_VERSIONS = setOf(
+            PROCEDURAL_VERSION_MAJOR to VERSION_MINOR,
+            OBJECT_VERSION_MAJOR to VERSION_MINOR,
+            PLATFORM_VERSION_MAJOR to VERSION_MINOR,
+        )
     }
 }
+
+/** Таблица существует в файле только в профиле 3.0. */
+data class EventTable(
+    val appStateClassIndex: Int = FormatLimits.NO_CLASS_INDEX,
+    val handlers: List<EventHandlerEntry> = emptyList(),
+)
+
+data class EventHandlerEntry(val eventKind: Int, val functionIndex: Int)

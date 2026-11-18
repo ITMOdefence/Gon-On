@@ -13,6 +13,11 @@
 - `objects.al` — несколько классов, поле-объект, две ссылки на один объект,
   метод с несколькими параметрами, конструктор с ветвлением и инициализаторы
   полей. Печатает `25`, `6`, `100`, `35`, `3`, `Ann`.
+- `platform_app.al` — профиль 3.0, окно, состояние, кнопка, поле ввода,
+  слушатель и четыре события. Для исполнения нужна GVM/PUNos 3.0;
+  в corpus проверяется загрузка (`execution: load-only`), ОС не подменяется.
+- `platform_calls.al` — профиль 3.0, все 21 вызов в функции operations;
+  main их не выполняет и возвращает 0. Эталон для проверки набора инструкций.
 
 Каждому `.al`-файлу соответствуют два golden-файла:
 
@@ -23,9 +28,11 @@
   Используется в `compat/ContractGoldenBytesTest`: так проверяется реальная
   сериализация, а не только модель.
 
-Ожидаемый вывод и результат `main` каждого примера записаны в
+Ожидаемый вывод и результат `main` обычных примеров записаны в
 `src/test/kotlin/ru/itmo/applang/compat/Examples.kt`; их проверяет
 `compat/ExampleExecutionTest`, и они же попадают в набор совместимости.
+Платформенные примеры добавляются отдельно в `ConformanceCorpus.platformEntries`:
+для приложения с устройствами нет обещанного stdout или результата main.
 
 ## Как прогнать вручную
 
@@ -37,6 +44,8 @@
 ./gradlew run --args="examples/gcd_demo.al -o /tmp/gcd.albc --disasm"
 ./gradlew run --args="examples/counter.al -o /tmp/counter.albc --disasm"
 ./gradlew run --args="examples/objects.al -o /tmp/objects.albc --disasm"
+./gradlew run --args="examples/platform_app.al -o /tmp/platform_app.albc --disasm"
+./gradlew run --args="examples/platform_calls.al -o /tmp/platform_calls.albc --disasm"
 ```
 
 ## Обновление golden-файлов
@@ -46,7 +55,7 @@
 изменение байткода — то, что и ожидалось):
 
 ```bash
-for name in hello_world factorial_while gcd_demo counter objects; do
+for name in hello_world factorial_while gcd_demo counter objects platform_app platform_calls; do
   ./gradlew run -q --args="examples/$name.al -o /tmp/$name.albc --disasm" | tail -n +3 > examples/$name.albc.asm
 done
 ```
@@ -60,4 +69,5 @@ done
 дамп в `build/compat/<name>.albc.hex`: проверь diff и скопируй файл в
 `examples/`. Новый пример добавляется в `Examples.all`, в `@ValueSource`
 тестов `EndToEndExamplesTest`, `ContractGoldenBytesTest`, `ReaderMutationTest`
-и получает оба golden-файла.
+и получает оба golden-файла. Пример с платформенными эффектами вместо Examples.all
+регистрируется в platformEntries с честным режимом исполнения.

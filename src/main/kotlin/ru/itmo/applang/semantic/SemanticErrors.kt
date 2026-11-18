@@ -5,6 +5,10 @@ package ru.itmo.applang.semantic
  * (тесты проверяют код, а не текст сообщения — текст может меняться, код нет).
  */
 object SemanticErrorCodes {
+    const val PLATFORM_CONSTRUCTION = "PLATFORM_CONSTRUCTION"
+    const val PLATFORM_READ_ONLY = "PLATFORM_READ_ONLY"
+    const val INVALID_EVENT_HANDLER = "INVALID_EVENT_HANDLER"
+    const val INVALID_APP_STATE = "INVALID_APP_STATE"
     const val UNDEFINED_VARIABLE = "UNDEFINED_VARIABLE"
     const val UNDEFINED_FUNCTION = "UNDEFINED_FUNCTION"
     const val DUPLICATE_FUNCTION = "DUPLICATE_FUNCTION"

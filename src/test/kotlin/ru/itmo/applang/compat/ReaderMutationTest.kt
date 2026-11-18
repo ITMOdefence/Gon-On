@@ -53,7 +53,7 @@ private enum class Mutation {
 class ReaderMutationTest {
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo", "counter", "objects"])
+    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo", "counter", "objects", "platform_app", "platform_calls"])
     @DisplayName("Любая порча байтов примера даёт отказ формата или каноничный корректный файл")
     fun `mutated file is rejected cleanly or read canonically`(name: String) {
         // Arrange

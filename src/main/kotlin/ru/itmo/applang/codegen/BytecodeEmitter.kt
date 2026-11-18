@@ -34,6 +34,10 @@ import ru.itmo.applang.bytecode.FormatLimits
 import ru.itmo.applang.bytecode.FunctionEntry
 import ru.itmo.applang.bytecode.Instruction
 import ru.itmo.applang.semantic.ENTRY_POINT_NAME
+import ru.itmo.applang.platform.PlatformAbi
+import ru.itmo.applang.platform.PlatformCatalog
+import ru.itmo.applang.bytecode.EventTable
+import ru.itmo.applang.bytecode.EventHandlerEntry
 import java.util.IdentityHashMap
 
 private val BUILTIN_NAMES = setOf("print", "println")
@@ -71,13 +75,15 @@ class BytecodeEmitter {
     private val functionIndex = IdentityHashMap<Any, Int>()
     private val topLevelFunctionIndex = mutableMapOf<String, Int>()
     private val classIndex = IdentityHashMap<ClassDecl, Int>()
+    private var platformEnabled = false
 
     fun emit(program: Program): BytecodeModule {
-        val isObjectProfile = program.classes.isNotEmpty()
+        platformEnabled = program.usesPlatform
+        val isObjectProfile = program.classes.isNotEmpty() || platformEnabled
         val layout = functionLayout(program)
         layout.forEachIndexed { index, slot -> functionIndex[slot.key] = index }
         program.functions.forEach { topLevelFunctionIndex[it.name] = functionIndex.getValue(it) }
-        program.classes.forEachIndexed { index, classDecl -> classIndex[classDecl] = index }
+        program.classes.forEachIndexed { index, classDecl -> classIndex[classDecl] = index + if (platformEnabled) FormatLimits.PLATFORM_CLASS_COUNT else 0 }
 
         // Наличие и сигнатуру main проверяет TypeChecker (MISSING_MAIN / INVALID_MAIN_SIGNATURE);
         // здесь её отсутствие — нарушение инварианта пайплайна, а не ошибка пользователя.
@@ -89,7 +95,12 @@ class BytecodeEmitter {
         // таблиц — так раскладка совпадает с эталоном docs/backlog/bytecode-contract.md §11.
         // Профиль 1.0 сохраняет прежний порядок: имя функции после констант её кода.
         val classes = if (isObjectProfile) {
-            val entries = program.classes.map { classEntry(it) }
+            val builtins = if (platformEnabled) PlatformAbi.classes.map { cls ->
+                ClassEntry(cls.name, constantPool.stringConst(cls.name), cls.fields.map { (name, type) ->
+                    FieldEntry(name, constantPool.stringConst(name), PlatformAbi.fieldType(type))
+                }, emptyList())
+            } else emptyList()
+            val entries = builtins + program.classes.map { classEntry(it) }
             layout.forEach { constantPool.stringConst(it.debugName) }
             entries
         } else {
@@ -108,12 +119,18 @@ class BytecodeEmitter {
         }
 
         return BytecodeModule(
-            versionMajor = if (isObjectProfile) BytecodeModule.OBJECT_VERSION_MAJOR else BytecodeModule.PROCEDURAL_VERSION_MAJOR,
+            versionMajor = if (platformEnabled) BytecodeModule.PLATFORM_VERSION_MAJOR else if (isObjectProfile) BytecodeModule.OBJECT_VERSION_MAJOR else BytecodeModule.PROCEDURAL_VERSION_MAJOR,
             versionMinor = BytecodeModule.VERSION_MINOR,
             constants = constants,
             functions = functions,
             entryFunctionIndex = entryIndex,
             classes = classes,
+            events = if (platformEnabled) EventTable(
+                if (program.resolvedAppStateClassIndex >= 0) program.resolvedAppStateClassIndex else FormatLimits.NO_CLASS_INDEX,
+                PlatformAbi.events.mapNotNull { event ->
+                    topLevelFunctionIndex[event.name]?.let { EventHandlerEntry(event.kind, it) }
+                },
+            ) else EventTable(),
         )
     }
 
@@ -148,7 +165,8 @@ class BytecodeEmitter {
         Type.BOOL -> FieldType.BoolType
         Type.STRING -> FieldType.StringType
         is Type.ClassType -> FieldType.ObjectType(
-            classIndex.entries.single { it.key.name == type.name }.value,
+            if (platformEnabled && type.name in PlatformAbi.classNames) PlatformAbi.classIndex(type.name)
+            else classIndex.entries.single { it.key.name == type.name }.value,
         )
         Type.UNIT -> error("Unit не может быть типом поля — TypeChecker должен был это отклонить")
     }
@@ -411,6 +429,14 @@ class BytecodeEmitter {
                 emitExpr(arg)
             }
 
+            if (platformEnabled) {
+                val instruction = if (expr.functionName == "bindAppState") Instruction.BindAppState
+                    else PlatformCatalog.find(expr.functionName)?.instruction
+                if (instruction != null) {
+                    buffer.emit(instruction)
+                    return
+                }
+            }
             val constructed = expr.resolvedConstructorClass
             if (constructed == null) {
                 buffer.emit(Instruction.Call(topLevelFunctionIndex.getValue(expr.functionName)))

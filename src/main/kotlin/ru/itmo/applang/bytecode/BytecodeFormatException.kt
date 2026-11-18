@@ -34,6 +34,9 @@ enum class BytecodeIssue {
     RETURN,
     FALLOFF,
     RESOURCE_LIMIT,
+    /** Расширение 3.0; в 1.0/2.0 не выдаётся. */
+    PLATFORM_TYPE,
+    EVENT_TABLE,
 }
 
 /**

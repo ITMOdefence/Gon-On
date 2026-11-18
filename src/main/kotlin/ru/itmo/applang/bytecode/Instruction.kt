@@ -58,4 +58,27 @@ sealed class Instruction(val opcode: Opcode) {
 
     /** Профиль 2.0: `[receiver, value] -> []`, значение должно соответствовать объявленному типу поля. */
     data class SetField(val classIndex: Int, val fieldIndex: Int) : Instruction(Opcode.SET_FIELD)
+    /** Профиль 3.0: отдельная инструкция для каждой платформенной операции. */
+    data object OpenWindow : Instruction(Opcode.OPEN_WINDOW)
+    data object SetText : Instruction(Opcode.SET_TEXT)
+    data object AddButton : Instruction(Opcode.ADD_BUTTON)
+    data object AddTextInput : Instruction(Opcode.ADD_TEXT_INPUT)
+    data object GetText : Instruction(Opcode.GET_TEXT)
+    data object DrawImage : Instruction(Opcode.DRAW_IMAGE)
+    data object DrawMarker : Instruction(Opcode.DRAW_MARKER)
+    data object Listen : Instruction(Opcode.LISTEN)
+    data object Connect : Instruction(Opcode.CONNECT)
+    data object SendText : Instruction(Opcode.SEND_TEXT)
+    data object CloseConnection : Instruction(Opcode.CLOSE_CONNECTION)
+    data object CloseListener : Instruction(Opcode.CLOSE_LISTENER)
+    data object CapturePhoto : Instruction(Opcode.CAPTURE_PHOTO)
+    data object UploadPhoto : Instruction(Opcode.UPLOAD_PHOTO)
+    data object GetDeviceLocation : Instruction(Opcode.GET_DEVICE_LOCATION)
+    data object ReleasePhoto : Instruction(Opcode.RELEASE_PHOTO)
+    data object ReadText : Instruction(Opcode.READ_TEXT)
+    data object WriteText : Instruction(Opcode.WRITE_TEXT)
+    data object FormatInt : Instruction(Opcode.FORMAT_INT)
+    data object ParseInt : Instruction(Opcode.PARSE_INT)
+    data object GetTextField : Instruction(Opcode.GET_TEXT_FIELD)
+    data object BindAppState : Instruction(Opcode.BIND_APP_STATE)
 }

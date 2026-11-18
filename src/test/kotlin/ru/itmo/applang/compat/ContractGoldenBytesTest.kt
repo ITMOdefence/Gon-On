@@ -45,7 +45,7 @@ class ContractGoldenBytesTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo", "counter", "objects"])
+    @ValueSource(strings = ["hello_world", "factorial_while", "gcd_demo", "counter", "objects", "platform_app", "platform_calls"])
     @DisplayName("Байты примера совпадают с зафиксированным дампом examples/<name>.albc.hex")
     fun `example bytes match the committed hex dump`(name: String) {
         // Arrange
