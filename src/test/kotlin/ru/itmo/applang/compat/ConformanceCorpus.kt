@@ -29,6 +29,8 @@ data class CorpusEntry(
     val sourceFile: String? = null,
     /** Проверяется загрузка; исполнение требует реальной платформы. */
     val loadOnly: Boolean = false,
+    /** Файл загружается успешно, затем исполнение завершается указанной категорией fault. */
+    val runtimeFault: String? = null,
 )
 
 /**
@@ -42,7 +44,8 @@ data class CorpusEntry(
  */
 object ConformanceCorpus {
 
-    fun entries(): List<CorpusEntry> = validEntries() + platformEntries() + invalidProcedural() + invalidObject() + invalidPlatform()
+    fun entries(): List<CorpusEntry> = validEntries() + platformEntries() + platformTextEntries() +
+        invalidProcedural() + invalidObject() + invalidPlatform()
 
     // ------------------------------------------------------------------ корректные файлы
 
@@ -115,6 +118,44 @@ object ConformanceCorpus {
                 main(Instruction.AddButton, Instruction.Pop, Instruction.ReturnVoid)),
             invalid("platform_result_not_consumed", "3.0", BytecodeIssue.RETURN, "результат CAPTURE_PHOTO оставлен на стеке",
                 main(Instruction.CapturePhoto, Instruction.ReturnVoid)),
+        )
+    }
+
+    private fun platformTextEntries(): List<CorpusEntry> {
+        fun entry(name: String, description: String, body: String, stdout: String? = "", fault: String? = null): CorpusEntry {
+            val source = "fun main() { $body }"
+            val compiled = ru.itmo.applang.compiler.Compiler.compile(source)
+            check(compiled is ru.itmo.applang.compiler.CompilationResult.Success) {
+                compiled.diagnostics.joinToString("\n")
+            }
+            return CorpusEntry("valid/$name.albc", "3.0", description, compiled.bytes,
+                stdout = stdout, expectationSource = "platform-contract", sourceFile = source, runtimeFault = fault)
+        }
+        return listOf(
+            entry("format_int_limits", "Десятичная запись границ Int и нуля",
+                "println(formatInt(-2147483648)); println(formatInt(0)); println(formatInt(2147483647));",
+                "-2147483648\n0\n2147483647\n"),
+            entry("parse_int_limits", "Разбор границ Int, знака плюс и ведущих нулей",
+                "println(parseInt(\"-2147483648\").value); println(parseInt(\"+000\").value); println(parseInt(\"2147483647\").value);",
+                "-2147483648\n0\n2147483647\n"),
+            entry("parse_int_invalid", "Неверное число возвращает код и непустое сообщение",
+                "val r = parseInt(\"+\"); println(r.ok); println(r.errorCode); println(r.errorMessage == \"\");",
+                "false\n1\nfalse\n"),
+            entry("parse_int_overflow", "Переполнение Int обрабатывается через if",
+                "val r = parseInt(\"2147483648\"); if (!r.ok) { println(r.errorCode); }", "13\n"),
+            entry("text_empty_fields", "Пустые поля и поле после последнего разделителя сохраняются",
+                "println(getField(\"a;;c;\", \";\", 1).value); println(getField(\"a;;c;\", \";\", 3).value); println(getField(\"\", \";\", 0).value);",
+                "\n\n\n"),
+            entry("text_literal_separator", "Разделитель со знаками регулярного выражения обрабатывается буквально",
+                "println(getField(\"один.*два.*\", \".*\", 1).value);", "два\n"),
+            entry("text_missing_field", "Отсутствующее поле возвращает CORE_NOT_FOUND",
+                "val r = getField(\"a\", \";\", 1); println(r.ok); println(r.errorCode);", "false\n5\n"),
+            entry("text_invalid_separator", "Пустой разделитель и отрицательный индекс отклоняются",
+                "println(getField(\"a\", \"\", 0).errorCode); println(getField(\"a\", \";\", -1).errorCode);", "1\n1\n"),
+            entry("int_error_value", "Чтение value ошибочного IntResult",
+                "parseInt(\"invalid\").value;", stdout = null, fault = "UNINITIALIZED"),
+            entry("text_error_value", "Чтение value ошибочного TextResult",
+                "getField(\"a\", \";\", 2).value;", stdout = null, fault = "UNINITIALIZED"),
         )
     }
 
@@ -291,7 +332,7 @@ object ConformanceCorpus {
 
     private fun manifest(entries: List<CorpusEntry>): String = buildString {
         appendLine("{")
-        appendLine("  \"format\": \"gon-on-albc-conformance/1\",")
+        appendLine("  \"format\": \"gon-on-albc-conformance/2\",")
         appendLine("  \"files\": [")
         entries.forEachIndexed { index, entry ->
             val fields = mutableListOf(
@@ -302,8 +343,15 @@ object ConformanceCorpus {
             )
             entry.expectedIssue?.let { fields += "\"issue\": ${json(it.name)}" }
             entry.stdout?.let { fields += "\"stdout\": ${json(it)}" }
-            fields += "\"execution\": ${json(if (entry.loadOnly) "load-only" else if (entry.expectedIssue == null) "run" else "none")}"
-            if (entry.expectedIssue == null && !entry.loadOnly) fields += "\"returnValue\": ${returnValueJson(entry.returnValue)}"
+            val execution = when {
+                entry.loadOnly -> "load-only"
+                entry.expectedIssue != null -> "none"
+                entry.runtimeFault != null -> "run-fault"
+                else -> "run"
+            }
+            fields += "\"execution\": ${json(execution)}"
+            entry.runtimeFault?.let { fields += "\"runtimeFault\": ${json(it)}" }
+            if (execution == "run") fields += "\"returnValue\": ${returnValueJson(entry.returnValue)}"
             entry.expectationSource?.let { fields += "\"expectationSource\": ${json(it)}" }
             append("    { ").append(fields.joinToString(", ")).append(" }")
             appendLine(if (index < entries.lastIndex) "," else "")
@@ -342,6 +390,9 @@ object ConformanceCorpus {
         Сгенерирован компилятором Gon&On (`./gradlew conformanceCorpus`). Описание каждого файла — в
         `manifest.json`:
 
+        Формат `gon-on-albc-conformance/2` добавляет режим `run-fault` и поле
+        `runtimeFault`. Потребитель должен проверить версию формата перед запуском.
+
         - `expect: "accept"` — корректный файл. Загрузчик и верификатор GVM обязаны его принять;
           раннер без аргументов должен напечатать `stdout`, а `main` — вернуть `returnValue`
           (`null` — `main` без результата). `expectationSource: "specification"` — ожидание
@@ -352,6 +403,13 @@ object ConformanceCorpus {
           Старые GVM должны отказаться от профиля 3.0 с VERSION; приёмка этих файлов требует GVM 3.0.
         - `expect: "reject"` — файл нарушает контракт. GVM обязана отказать при загрузке;
           `issue` — ожидаемая категория `BytecodeIssue` из документации верификатора GVM.
+        - `execution: "run-fault"` — корректный файл принимается загрузчиком, затем
+          исполнение завершается категорией `runtimeFault`. Нормальный возврат является
+          ошибкой проверки. Поле `returnValue` отсутствует.
+
+        Текстовые сценарии 3.0 исполняют FORMAT_INT, PARSE_INT и GET_TEXT_FIELD.
+        Они требуют реализации этих операций в GVM. Проверки на стороне компилятора
+        используют детерминированный PlatformTextHost; результат внешней GVM проверяется отдельно.
 
         Контракт: `docs/BYTECODE_SPEC.md` и `docs/backlog/bytecode-contract.md` репозитория Gon-On.
     """.trimIndent() + "\n"

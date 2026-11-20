@@ -5,6 +5,7 @@ package ru.itmo.applang.semantic
  * (тесты проверяют код, а не текст сообщения — текст может меняться, код нет).
  */
 object SemanticErrorCodes {
+    const val INTEGER_LITERAL_OUT_OF_RANGE = "INTEGER_LITERAL_OUT_OF_RANGE"
     const val PLATFORM_CONSTRUCTION = "PLATFORM_CONSTRUCTION"
     const val PLATFORM_READ_ONLY = "PLATFORM_READ_ONLY"
     const val INVALID_EVENT_HANDLER = "INVALID_EVENT_HANDLER"

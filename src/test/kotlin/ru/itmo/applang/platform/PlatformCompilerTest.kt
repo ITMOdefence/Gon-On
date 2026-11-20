@@ -21,6 +21,48 @@ internal fun compilePlatform(source: String): CompilationResult.Success {
 
 class PlatformCompilerTest {
     @ParameterizedTest
+    @MethodSource("operationNames")
+    @DisplayName("Каждая операция проверяет арность и тип каждого аргумента")
+    fun `all operation arguments reject incorrect types and counts`(name: String) {
+        // Arrange
+        val operation = PlatformCatalog.find(name)!!
+        val parameters = operation.parameters.joinToString { "${it.name}: ${it.type}" }
+        val arguments = operation.parameters.map { it.name }
+        fun rejectedCall(args: List<String>, diagnostic: String) {
+            val source = "fun check($parameters) { $name(${args.joinToString()}); } fun main() {}"
+            val result = Compiler.compile(source)
+            assertTrue(result is CompilationResult.Failure)
+            assertTrue(result.diagnostics.any { it.code == diagnostic }, result.diagnostics.toString())
+        }
+
+        // Act / Assert
+        val wrongCount = if (arguments.isEmpty()) listOf("1") else arguments.dropLast(1)
+        rejectedCall(wrongCount, "ARITY_MISMATCH")
+        operation.parameters.forEachIndexed { index, parameter ->
+            val wrongType = arguments.toMutableList()
+            wrongType[index] = if (parameter.type == ru.itmo.applang.ast.Type.INT) "\"wrong\"" else "1"
+            rejectedCall(wrongType, "ARGUMENT_TYPE_MISMATCH")
+        }
+    }
+
+    @Test
+    @DisplayName("Все встроенные классы защищены от создания и записи каждого публичного поля")
+    fun `every builtin type is protected at source level`() {
+        // Arrange / Act / Assert
+        for (type in PlatformAbi.classes) {
+            val construction = Compiler.compile("fun main() { ${type.name}(); }")
+            assertTrue(construction.diagnostics.any { it.code == "PLATFORM_CONSTRUCTION" }, type.name)
+            for ((field, _) in type.fields) {
+                val source = "fun check(value: ${type.name}) { value.$field = value.$field; } fun main() {}"
+                val assignment = Compiler.compile(source)
+                assertTrue(assignment.diagnostics.any { it.code == "PLATFORM_READ_ONLY" }, "${type.name}.$field")
+            }
+            val oldProfile = compilePlatform("class ${type.name} {} fun main() { ${type.name}(); }")
+            assertEquals(2, oldProfile.module.versionMajor, type.name)
+        }
+    }
+
+    @ParameterizedTest
     @MethodSource("operations")
     @DisplayName("Каждый вызов каталога получает свой контрактный опкод и сохраняет тип результата")
     fun `each catalog operation has its own opcode and typed result`(name: String, code: Int, resultType: String) {
@@ -115,6 +157,8 @@ class PlatformCompilerTest {
     }
 
     companion object {
+        @JvmStatic fun operationNames() = PlatformAbi.instructions.keys.toList()
+
         @JvmStatic fun operations() = listOf(
             Arguments.of("openWindow", 0x50, "WindowResult"), Arguments.of("setText", 0x51, "Status"),
             Arguments.of("addButton", 0x52, "Status"), Arguments.of("addTextInput", 0x53, "Status"),

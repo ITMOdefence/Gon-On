@@ -12,7 +12,10 @@ private fun ParserRuleContext.pos(): SourcePosition =
 private fun TerminalNode.pos(): SourcePosition =
     SourcePosition(symbol.line, symbol.charPositionInLine + 1)
 
-/** Строит AST из ANTLR parse tree. Не выполняет никакой семантической проверки. */
+class IntegerLiteralOutOfRangeException(val position: SourcePosition) :
+    Exception("целочисленный литерал вне диапазона Int −2147483648..2147483647")
+
+/** Строит AST из ANTLR parse tree и проверяет представимость числовых литералов. */
 class AstBuilder : AppLangBaseVisitor<Any?>() {
 
     fun buildProgram(ctx: AppLangParser.ProgramContext): Program {
@@ -139,7 +142,14 @@ class AstBuilder : AppLangBaseVisitor<Any?>() {
             BinaryOperator.OR, visitExprNode(ctx.left), visitExprNode(ctx.right), ctx.pos(),
         )
         is AppLangParser.LogicalNotContext -> UnaryOp(UnaryOperator.NOT, visitExprNode(ctx.operand), ctx.pos())
-        is AppLangParser.UnaryMinusContext -> UnaryOp(UnaryOperator.NEG, visitExprNode(ctx.operand), ctx.pos())
+        is AppLangParser.UnaryMinusContext -> {
+            // Единственный модуль отрицательного Int, который не помещается в положительный Int.
+            if (ctx.operand is AppLangParser.IntLiteralContext && ctx.operand.text.toLongOrNull() == 2_147_483_648L) {
+                IntLiteral(Int.MIN_VALUE, ctx.pos())
+            } else {
+                UnaryOp(UnaryOperator.NEG, visitExprNode(ctx.operand), ctx.pos())
+            }
+        }
         is AppLangParser.ParensContext -> visitExprNode(ctx.inner)
         is AppLangParser.CallContext -> Call(
             ctx.IDENT().text,
@@ -147,7 +157,9 @@ class AstBuilder : AppLangBaseVisitor<Any?>() {
             ctx.pos(),
         )
         is AppLangParser.VarRefContext -> VarRef(ctx.IDENT().text, ctx.pos())
-        is AppLangParser.IntLiteralContext -> IntLiteral(ctx.text.toInt(), ctx.pos())
+        is AppLangParser.IntLiteralContext -> IntLiteral(
+            ctx.text.toIntOrNull() ?: throw IntegerLiteralOutOfRangeException(ctx.pos()), ctx.pos(),
+        )
         is AppLangParser.StringLiteralContext -> StringLiteral(unescapeString(ctx.text), ctx.pos())
         is AppLangParser.BoolLiteralContext -> BoolLiteral(ctx.text == "true", ctx.pos())
         else -> error("Неизвестный вид expr в грамматике: ${ctx.text}")

@@ -24,6 +24,25 @@ private fun runCli(vararg args: String): CliRun {
 }
 
 class CliTest {
+    @Test
+    @DisplayName("Литерал вне диапазона Int сохраняет выходной файл и выводит диагностику")
+    fun `out of range integer preserves existing output`(@TempDir directory: Path) {
+        // Arrange
+        val source = directory.resolve("overflow.al")
+        Files.writeString(source, "fun main(): Int { return 2147483648; }")
+        val output = directory.resolve("existing.albc")
+        val original = byteArrayOf(1, 2, 3)
+        Files.write(output, original)
+
+        // Act
+        val result = runCli(source.toString(), "-o", output.toString())
+
+        // Assert
+        assertEquals(ExitCodes.COMPILATION_FAILED, result.exitCode)
+        assertTrue(result.err.contains("INTEGER_LITERAL_OUT_OF_RANGE"))
+        assertArrayEquals(original, Files.readAllBytes(output))
+    }
+
 
     @Test
     @DisplayName("Успешная компиляция пишет проверенный файл и только после этого сообщает об успехе")

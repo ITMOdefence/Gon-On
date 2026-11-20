@@ -29,12 +29,37 @@ class PlatformBytecodeTest {
             val changed = module.classes.toMutableList()
             changed[index] = cls.copy(fields = cls.fields + FieldEntry(cls.name, cls.nameConstIndex, FieldType.IntType))
             rejected(module.copy(classes = changed), BytecodeIssue.PLATFORM_TYPE)
+
+            val name = "Forged$index"
+            changed[index] = cls.copy(name = name, nameConstIndex = module.constants.size)
+            rejected(module.copy(constants = module.constants + ConstantValue.StringConst(name), classes = changed), BytecodeIssue.PLATFORM_TYPE)
+
+            changed[index] = cls.copy(methodFunctionIndices = listOf(0))
+            rejected(module.copy(classes = changed), BytecodeIssue.PLATFORM_TYPE)
+
+            cls.fields.forEachIndexed { fieldIndex, field ->
+                changed[index] = cls.copy(fields = cls.fields.filterIndexed { i, _ -> i != fieldIndex })
+                rejected(module.copy(classes = changed), BytecodeIssue.PLATFORM_TYPE)
+
+                val wrongType = if (field.type == FieldType.IntType) FieldType.BoolType else FieldType.IntType
+                changed[index] = cls.copy(fields = cls.fields.toMutableList().also {
+                    it[fieldIndex] = field.copy(type = wrongType)
+                })
+                rejected(module.copy(classes = changed), BytecodeIssue.PLATFORM_TYPE)
+            }
+            if (cls.fields.size > 1) {
+                changed[index] = cls.copy(fields = cls.fields.reversed())
+                rejected(module.copy(classes = changed), BytecodeIssue.PLATFORM_TYPE)
+            }
         }
         val changed = module.classes.toMutableList()
         changed[5] = changed[5].copy(fields = emptyList())
         rejected(module.copy(classes = changed), BytecodeIssue.PLATFORM_TYPE)
         val main = module.functions[module.entryFunctionIndex]
-        for (instruction in listOf(Instruction.AllocObject(0), Instruction.SetField(5, 0))) {
+        val forbidden = prefix.indices.map { Instruction.AllocObject(it) } + prefix.flatMapIndexed { classIndex, cls ->
+            cls.fields.indices.map { Instruction.SetField(classIndex, it) }
+        }
+        for (instruction in forbidden) {
             rejected(module.copy(functions = module.functions.toMutableList().also {
                 it[module.entryFunctionIndex] = main.copy(instructions = listOf(Instruction.ReturnVoid, instruction))
             }), BytecodeIssue.PLATFORM_TYPE)

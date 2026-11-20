@@ -32,9 +32,15 @@ class ConformanceCorpusTest {
             if (expectedIssue == null) {
                 val module = BytecodeReader.readFromBytes(bytes)
                 if (!entry.loadOnly) {
-                    val result = ReferenceInterpreter(module).run()
-                    assertEquals(entry.stdout, result.stdout, entry.path)
-                    assertEquals(entry.returnValue, result.returnValue, entry.path)
+                    val interpreter = ReferenceInterpreter(module, platformHost = PlatformTextHost::invoke)
+                    if (entry.runtimeFault != null) {
+                        val fault = assertThrows(ExecutionFault::class.java, { interpreter.run() }, entry.path)
+                        assertEquals(entry.runtimeFault, fault.message!!.substringBefore(':'), entry.path)
+                    } else {
+                        val result = interpreter.run()
+                        assertEquals(entry.stdout, result.stdout, entry.path)
+                        assertEquals(entry.returnValue, result.returnValue, entry.path)
+                    }
                 }
                 assertEquals(entry.profile, "${module.versionMajor}.${module.versionMinor}", entry.path)
             } else {
@@ -59,6 +65,17 @@ class ConformanceCorpusTest {
         assertTrue(entries.any { it.expectedIssue == null && it.profile == "2.0" })
         assertTrue(entries.any { it.expectedIssue == null && it.profile == "3.0" })
         assertTrue(manifest.contains("\"execution\": \"load-only\""))
+        assertTrue(manifest.contains("\"format\": \"gon-on-albc-conformance/2\""))
+        assertEquals(2, entries.count { it.runtimeFault == "UNINITIALIZED" })
+        for (entry in entries.filter { it.runtimeFault != null }) {
+            assertEquals(null, entry.expectedIssue)
+            assertTrue(!entry.loadOnly)
+            val line = manifest.lineSequence().single { it.contains("\"path\": \"${entry.path}\"") }
+            assertTrue(line.contains("\"expect\": \"accept\""))
+            assertTrue(line.contains("\"execution\": \"run-fault\""))
+            assertTrue(line.contains("\"runtimeFault\": \"UNINITIALIZED\""))
+            assertTrue(!line.contains("\"returnValue\""))
+        }
         entries.forEach { assertTrue(manifest.contains("\"path\": \"${it.path}\""), it.path) }
         val filesOnDisk = Files.walk(directory).filter { it.toString().endsWith(".albc") }.count()
         assertEquals(entries.size.toLong(), filesOnDisk)

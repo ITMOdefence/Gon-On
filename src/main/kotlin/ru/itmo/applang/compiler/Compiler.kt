@@ -3,6 +3,7 @@ package ru.itmo.applang.compiler
 import org.antlr.v4.runtime.CharStreams
 import org.antlr.v4.runtime.CommonTokenStream
 import ru.itmo.applang.ast.AstBuilder
+import ru.itmo.applang.ast.IntegerLiteralOutOfRangeException
 import ru.itmo.applang.ast.Program
 import ru.itmo.applang.bytecode.BytecodeFormatException
 import ru.itmo.applang.bytecode.BytecodeModule
@@ -72,7 +73,12 @@ object Compiler {
             return CompilationResult.Failure(null, collector.diagnostics)
         }
 
-        val program = AstBuilder().buildProgram(programCtx)
+        val program = try {
+            AstBuilder().buildProgram(programCtx)
+        } catch (e: IntegerLiteralOutOfRangeException) {
+            collector.error(SemanticErrorCodes.INTEGER_LITERAL_OUT_OF_RANGE, e.message!!, e.position)
+            return CompilationResult.Failure(null, collector.diagnostics)
+        }
         TypeChecker(collector).check(program)
         if (collector.hasErrors) {
             return CompilationResult.Failure(program, collector.diagnostics)
